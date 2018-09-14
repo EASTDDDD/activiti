@@ -26,6 +26,18 @@
 	</properties>
 
 	<dependencies>
+		<!-- way 1 :初始化用户及角色分组 org.dbunit
+		<dependency>
+			<groupId>org.dbunit</groupId>
+			<artifactId>dbunit</artifactId>
+			<version>2.5.4</version>
+		</dependency>-->
+		
+		<dependency>
+		    <groupId>commons-io</groupId>
+		    <artifactId>commons-io</artifactId>
+		    <version>2.6</version>
+		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-devtools</artifactId>
@@ -119,6 +131,36 @@
 			</plugin>
 		</plugins>
 	</build>
-
+	<!-- 方法一初始化数据，不推荐
+	<profiles>
+<profile>
+<id>init-db</id>
+	<build>
+		<plugins>
+		<plugin>
+			<groupId>org.apache.maven.plugins</groupId>
+			<artifactId>maven-antrun-plugin</artifactId>
+			<version>1.8</version>
+			<configuration>
+				<target>
+					<property name="sql.type" value="mysql" />
+					<property name="dbunit.datatype" value="org.dbunit.ext.mysql.MySqlDataTypeFactory" />
+					<taskdef name="dbunit" classname="org.dbunit.ant.DbUnitTask" classpathref="maven.runtime.classpath" />
+					<java classname="com.example.demo.activiti.config.InitEngineeDatabase"
+						classpathref="maven.runtime.classpath" />
+						<dbunit driver="com.mysql.jdbc.Driver" url="jdbc:mysql://localhost:3306/demo?useUnicode=true&amp;characterEncoding=UTF-8" userid="root" password="root">
+						<dbconfig>
+							<property name="datatypeFactory" value="${dbunit.datatype}" />
+						</dbconfig>
+						<classpath refid="maven.runtime.classpath" />
+						<operation type="CLEAN_INSERT" src="src/main/resources/data/identity-data.xml" format="flat" transaction="true" />
+					</dbunit>
+				</target>
+			</configuration>
+		</plugin>
+		</plugins>
+	</build>
+</profile>
+</profiles> -->
 
 </project>

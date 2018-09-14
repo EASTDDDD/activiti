@@ -30,7 +30,19 @@
                 //rowCls: 'nav-tree-badge nav-tree-badge-new',
                 viewType: 'userdata',
                 leaf: true
-            }
+            },{
+                text:'流程定义模块',
+                iconCls: 'x-fa fa-address-card',
+                viewType:'processDefinitionContainer',
+                leaf:true
+            },{
+                text: 'Login',
+                iconCls: 'x-fa fa-check',
+                viewType: 'login',
+                //hidden:true,
+                //style:'display:none',
+                leaf: true
+           }
         ]
     }
 });

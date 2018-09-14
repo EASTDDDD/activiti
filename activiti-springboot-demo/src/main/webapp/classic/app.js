@@ -64358,6 +64358,373 @@ Ext.define('Ext.form.FieldAncestor', {extend:Ext.Mixin, mixinConfig:{id:'fieldAn
 }, onFieldValidityChange:Ext.emptyFn, onFieldErrorChange:Ext.emptyFn, onBeforeDestroy:function() {
   this.monitor = Ext.destroy(this.monitor);
 }});
+Ext.define('Ext.layout.component.field.FieldContainer', {extend:Ext.layout.component.Auto, alias:'layout.fieldcontainer', type:'fieldcontainer', waitForOuterHeightInDom:true, waitForOuterWidthInDom:true, beginLayout:function(ownerContext) {
+  var containerEl = this.owner.containerEl;
+  this.callParent([ownerContext]);
+  ownerContext.hasRawContent = true;
+  containerEl.setStyle('width', '');
+  containerEl.setStyle('height', '');
+  ownerContext.containerElContext = ownerContext.getEl('containerEl');
+}, calculateOwnerHeightFromContentHeight:function(ownerContext, contentHeight) {
+  var h = this.callParent([ownerContext, contentHeight]);
+  return h + this.getHeightAdjustment();
+}, calculateOwnerWidthFromContentWidth:function(ownerContext, contentWidth) {
+  var w = this.callParent([ownerContext, contentWidth]);
+  return w + this.getWidthAdjustment();
+}, measureContentHeight:function(ownerContext) {
+  return ownerContext.hasDomProp('containerLayoutDone') ? this.callParent([ownerContext]) : NaN;
+}, measureContentWidth:function(ownerContext) {
+  return ownerContext.hasDomProp('containerLayoutDone') ? this.callParent([ownerContext]) : NaN;
+}, publishInnerHeight:function(ownerContext, height) {
+  height -= this.getHeightAdjustment();
+  ownerContext.containerElContext.setHeight(height);
+}, publishInnerWidth:function(ownerContext, width) {
+  width -= this.getWidthAdjustment();
+  ownerContext.containerElContext.setWidth(width);
+}, privates:{getHeightAdjustment:function() {
+  var owner = this.owner, h = 0;
+  if (owner.labelAlign === 'top' && owner.hasVisibleLabel()) {
+    h += owner.labelEl.getHeight();
+  }
+  if (owner.msgTarget === 'under' && owner.hasActiveError()) {
+    h += owner.errorWrapEl.getHeight();
+  }
+  return h + owner.bodyEl.getPadding('tb');
+}, getWidthAdjustment:function() {
+  var owner = this.owner, w = 0;
+  if (owner.labelAlign !== 'top' && owner.hasVisibleLabel()) {
+    w += owner.labelWidth + (owner.labelPad || 0);
+  }
+  if (owner.msgTarget === 'side' && owner.hasActiveError()) {
+    w += owner.errorWrapEl.getWidth();
+  }
+  return w + owner.bodyEl.getPadding('lr');
+}}});
+Ext.define('Ext.form.FieldContainer', {extend:Ext.container.Container, mixins:{labelable:Ext.form.Labelable, fieldAncestor:Ext.form.FieldAncestor}, alias:'widget.fieldcontainer', componentLayout:'fieldcontainer', componentCls:Ext.baseCSSPrefix + 'form-fieldcontainer', shrinkWrap:true, autoEl:{tag:'div', role:'presentation'}, childEls:['containerEl'], combineLabels:false, labelConnector:', ', combineErrors:false, maskOnDisable:false, invalidCls:'', fieldSubTpl:['\x3cdiv id\x3d"{id}-containerEl" data-ref\x3d"containerEl" class\x3d"{containerElCls}"', 
+'\x3ctpl if\x3d"ariaAttributes"\x3e', '\x3ctpl foreach\x3d"ariaAttributes"\x3e {$}\x3d"{.}"\x3c/tpl\x3e', '\x3ctpl else\x3e', ' role\x3d"presentation"', '\x3c/tpl\x3e', '\x3e', '{%this.renderContainer(out,values)%}', '\x3c/div\x3e'], initComponent:function() {
+  var me = this;
+  me.initLabelable();
+  me.initFieldAncestor();
+  me.callParent();
+  me.initMonitor();
+}, onAdd:function(labelItem) {
+  var me = this;
+  if (labelItem.isLabelable && Ext.isGecko && Ext.firefoxVersion < 37 && me.layout.type === 'absolute' && !me.hideLabel && me.labelAlign !== 'top') {
+    labelItem.x += me.labelWidth + me.labelPad;
+  }
+  me.callParent(arguments);
+  if (labelItem.isLabelable && me.combineLabels) {
+    labelItem.oldHideLabel = labelItem.hideLabel;
+    labelItem.hideLabel = true;
+  }
+  me.updateLabel();
+}, onRemove:function(labelItem, isDestroying) {
+  var me = this;
+  me.callParent(arguments);
+  if (!isDestroying) {
+    if (labelItem.isLabelable && me.combineLabels) {
+      labelItem.hideLabel = labelItem.oldHideLabel;
+    }
+    me.updateLabel();
+  }
+}, initRenderData:function() {
+  var me = this, data = me.callParent();
+  data.containerElCls = me.containerElCls;
+  data = Ext.applyIf(data, me.getLabelableRenderData());
+  if (me.labelAlign === 'top' || me.msgTarget === 'under') {
+    data.extraFieldBodyCls += ' ' + Ext.baseCSSPrefix + 'field-container-body-vertical';
+  }
+  data.tipAnchorTarget = me.id + '-containerEl';
+  return data;
+}, getFieldLabel:function() {
+  var label = this.fieldLabel || '';
+  if (!label && this.combineLabels) {
+    label = Ext.Array.map(this.query('[isFieldLabelable]'), function(field) {
+      return field.getFieldLabel();
+    }).join(this.labelConnector);
+  }
+  return label;
+}, getSubTplData:function() {
+  var ret = this.initRenderData();
+  Ext.apply(ret, this.subTplData);
+  return ret;
+}, getSubTplMarkup:function(fieldData) {
+  var me = this, tpl = me.lookupTpl('fieldSubTpl'), html;
+  if (!tpl.renderContent) {
+    me.setupRenderTpl(tpl);
+  }
+  html = tpl.apply(me.getSubTplData(fieldData));
+  return html;
+}, updateLabel:function() {
+  var me = this, label = me.labelEl;
+  if (label) {
+    me.setFieldLabel(me.getFieldLabel());
+  }
+}, onFieldErrorChange:function() {
+  if (this.combineErrors) {
+    var me = this, oldError = me.getActiveError(), invalidFields = Ext.Array.filter(me.query('[isFormField]'), function(field) {
+      return field.hasActiveError();
+    }), newErrors = me.getCombinedErrors(invalidFields);
+    if (newErrors) {
+      me.setActiveErrors(newErrors);
+    } else {
+      me.unsetActiveError();
+    }
+    if (oldError !== me.getActiveError()) {
+      me.updateLayout();
+    }
+  }
+}, getCombinedErrors:function(invalidFields) {
+  var errors = [], f, fLen = invalidFields.length, field, activeErrors, a, aLen, error, label;
+  for (f = 0; f < fLen; f++) {
+    field = invalidFields[f];
+    activeErrors = field.getActiveErrors();
+    aLen = activeErrors.length;
+    for (a = 0; a < aLen; a++) {
+      error = activeErrors[a];
+      label = field.getFieldLabel();
+      errors.push((label ? label + ': ' : '') + error);
+    }
+  }
+  return errors;
+}, privates:{applyTargetCls:function(targetCls) {
+  var containerElCls = this.containerElCls;
+  this.containerElCls = containerElCls ? containerElCls + ' ' + targetCls : targetCls;
+}, getTargetEl:function() {
+  return this.containerEl;
+}, initRenderTpl:function() {
+  var me = this;
+  if (!me.hasOwnProperty('renderTpl')) {
+    me.renderTpl = me.lookupTpl('labelableRenderTpl');
+  }
+  return me.callParent();
+}}});
+Ext.define('Ext.form.CheckboxManager', {extend:Ext.util.MixedCollection, singleton:true, getByName:function(name, formId) {
+  return this.filterBy(function(item) {
+    return item.name === name && item.getFormId() === formId;
+  });
+}});
+Ext.define('Ext.form.field.Checkbox', {extend:Ext.form.field.Base, alias:['widget.checkboxfield', 'widget.checkbox'], alternateClassName:'Ext.form.Checkbox', modelValue:true, modelValueUnchecked:false, stretchInputElFixed:false, childEls:['boxLabelEl', 'innerWrapEl', 'displayEl'], fieldSubTpl:['\x3cdiv id\x3d"{cmpId}-innerWrapEl" data-ref\x3d"innerWrapEl" role\x3d"presentation"', ' class\x3d"{wrapInnerCls}"\x3e', '\x3ctpl if\x3d"labelAlignedBefore"\x3e', '{beforeBoxLabelTpl}', '\x3clabel id\x3d"{cmpId}-boxLabelEl" data-ref\x3d"boxLabelEl" {boxLabelAttrTpl} class\x3d"{boxLabelCls} ', 
+'{boxLabelCls}-{ui} {boxLabelCls}-{boxLabelAlign} {noBoxLabelCls} {childElCls}" for\x3d"{id}"\x3e', '{beforeBoxLabelTextTpl}', '{boxLabel}', '{afterBoxLabelTextTpl}', '\x3c/label\x3e', '{afterBoxLabelTpl}', '\x3c/tpl\x3e', '\x3cspan id\x3d"{cmpId}-displayEl" data-ref\x3d"displayEl" role\x3d"presentation" class\x3d"{fieldCls} {typeCls} ', '{typeCls}-{ui} {inputCls} {inputCls}-{ui} {fixCls} {childElCls} {afterLabelCls}"\x3e', '\x3cinput type\x3d"{inputType}" id\x3d"{id}" name\x3d"{inputName}" data-ref\x3d"inputEl" {inputAttrTpl}', 
+'\x3ctpl if\x3d"tabIdx !\x3d null"\x3e tabindex\x3d"{tabIdx}"\x3c/tpl\x3e', '\x3ctpl if\x3d"disabled"\x3e disabled\x3d"disabled"\x3c/tpl\x3e', '\x3ctpl if\x3d"checked"\x3e checked\x3d"checked"\x3c/tpl\x3e', '\x3ctpl if\x3d"fieldStyle"\x3e style\x3d"{fieldStyle}"\x3c/tpl\x3e', ' class\x3d"{checkboxCls}" autocomplete\x3d"off" hidefocus\x3d"true" ', '\x3ctpl foreach\x3d"ariaElAttributes"\x3e {$}\x3d"{.}"\x3c/tpl\x3e', '\x3ctpl foreach\x3d"inputElAriaAttributes"\x3e {$}\x3d"{.}"\x3c/tpl\x3e', '/\x3e', 
+'\x3c/span\x3e', '\x3ctpl if\x3d"!labelAlignedBefore"\x3e', '{beforeBoxLabelTpl}', '\x3clabel id\x3d"{cmpId}-boxLabelEl" data-ref\x3d"boxLabelEl" {boxLabelAttrTpl} class\x3d"{boxLabelCls} ', '{boxLabelCls}-{ui} {boxLabelCls}-{boxLabelAlign} {noBoxLabelCls} {childElCls}" for\x3d"{id}"\x3e', '{beforeBoxLabelTextTpl}', '{boxLabel}', '{afterBoxLabelTextTpl}', '\x3c/label\x3e', '{afterBoxLabelTpl}', '\x3c/tpl\x3e', '\x3c/div\x3e', {disableFormats:true, compiled:true}], publishes:{checked:1}, subTplInsertions:['beforeBoxLabelTpl', 
+'afterBoxLabelTpl', 'beforeBoxLabelTextTpl', 'afterBoxLabelTextTpl', 'boxLabelAttrTpl', 'inputAttrTpl'], isCheckbox:true, focusCls:'form-checkbox-focus', fieldBodyCls:Ext.baseCSSPrefix + 'form-cb-wrap', checked:false, checkedCls:Ext.baseCSSPrefix + 'form-cb-checked', boxLabelCls:Ext.baseCSSPrefix + 'form-cb-label', boxLabelAlign:'after', afterLabelCls:Ext.baseCSSPrefix + 'form-cb-after', wrapInnerCls:Ext.baseCSSPrefix + 'form-cb-wrap-inner', noBoxLabelCls:Ext.baseCSSPrefix + 'form-cb-no-box-label', 
+inputValue:'on', checkChangeEvents:[], changeEventName:'change', inputType:'checkbox', isTextInput:false, ariaRole:'native', onRe:/^on$/i, inputCls:Ext.baseCSSPrefix + 'form-cb', _checkboxCls:Ext.baseCSSPrefix + 'form-cb-input', initComponent:function() {
+  var me = this, value = me.value;
+  if (value !== undefined) {
+    me.checked = me.isChecked(value, me.inputValue);
+  }
+  me.callParent();
+  me.getManager().add(me);
+}, initDefaultName:Ext.emptyFn, initValue:function() {
+  var me = this, checked = !!me.checked;
+  me.originalValue = me.initialValue = me.lastValue = checked;
+  me.setValue(checked);
+}, getElConfig:function() {
+  var me = this;
+  if (me.isChecked(me.rawValue, me.inputValue)) {
+    me.addCls(me.checkedCls);
+  }
+  if (!me.fieldLabel) {
+    me.skipLabelForAttribute = true;
+  }
+  return me.callParent();
+}, getModelData:function() {
+  var me = this, o = me.callParent(arguments);
+  if (o) {
+    o[me.getName()] = me.checked ? me.modelValue : me.modelValueUnchecked;
+  }
+  return o;
+}, getSubTplData:function(fieldData) {
+  var me = this, boxLabel = me.boxLabel, boxLabelAlign = me.boxLabelAlign, labelAlignedBefore = boxLabelAlign === 'before', data, inputElAttr;
+  data = Ext.apply(me.callParent([fieldData]), {inputType:me.inputType, checkboxCls:me._checkboxCls, disabled:me.readOnly || me.disabled, checked:!!me.checked, wrapInnerCls:me.wrapInnerCls, boxLabel:boxLabel, boxLabelCls:me.boxLabelCls, boxLabelAlign:boxLabelAlign, labelAlignedBefore:labelAlignedBefore, afterLabelCls:labelAlignedBefore ? me.afterLabelCls : '', noBoxLabelCls:!boxLabel ? me.noBoxLabelCls : '', inputName:me.name || me.id});
+  inputElAttr = data.inputElAriaAttributes;
+  if (inputElAttr) {
+    delete inputElAttr['aria-readonly'];
+  }
+  return data;
+}, initEvents:function() {
+  var me = this;
+  me.callParent();
+  me.inputEl.on(me.changeEventName, me.onChangeEvent, me, {delegated:false});
+  if (Ext.isIE) {
+    me.bodyEl.on('mousedown', me.onBodyElMousedown, me);
+  } else {
+    if (Ext.isMac && (Ext.isGecko || Ext.isSafari)) {
+      me.boxLabelEl.on('mousedown', me.onBoxLabelOrInputMousedown, me);
+      me.inputEl.on('mousedown', me.onBoxLabelOrInputMousedown, me);
+    }
+  }
+}, setBoxLabel:function(boxLabel) {
+  var me = this;
+  me.boxLabel = boxLabel;
+  if (me.rendered) {
+    me.boxLabelEl.setHtml(boxLabel);
+    me.boxLabelEl[boxLabel ? 'removeCls' : 'addCls'](me.noBoxLabelCls);
+    me.updateLayout();
+  }
+}, onBodyElMousedown:function(e) {
+  if (e.target !== this.inputEl.dom) {
+    e.preventDefault();
+  }
+}, onBoxLabelOrInputMousedown:function(e) {
+  this.inputEl.focus();
+  e.preventDefault();
+}, onChangeEvent:function(e) {
+  this.updateValueFromDom();
+}, updateValueFromDom:function() {
+  var me = this, inputEl = me.inputEl && me.inputEl.dom;
+  if (inputEl) {
+    me.checked = me.rawValue = me.value = inputEl.checked;
+    me.checkChange();
+  }
+}, updateCheckedCls:function(checked) {
+  var me = this;
+  checked = checked != null ? checked : me.getValue();
+  me[checked ? 'addCls' : 'removeCls'](me.checkedCls);
+}, getRawValue:function() {
+  var inputEl = this.inputEl && this.inputEl.dom;
+  return inputEl ? inputEl.checked : this.checked;
+}, getValue:function() {
+  var inputEl = this.inputEl && this.inputEl.dom;
+  return inputEl ? inputEl.checked : this.checked;
+}, getSubmitValue:function() {
+  var unchecked = this.uncheckedValue, uncheckedVal = Ext.isDefined(unchecked) ? unchecked : null;
+  return this.getValue() ? this.inputValue : uncheckedVal;
+}, isChecked:function(rawValue, inputValue) {
+  var ret = false;
+  if (rawValue === true || rawValue === 'true') {
+    ret = true;
+  } else {
+    if (inputValue !== 'on' && (inputValue || inputValue === 0) && (Ext.isString(rawValue) || Ext.isNumber(rawValue))) {
+      ret = rawValue == inputValue;
+    } else {
+      ret = rawValue === '1' || rawValue === 1 || this.onRe.test(rawValue);
+    }
+  }
+  return ret;
+}, setRawValue:function(value) {
+  var me = this, inputEl = me.inputEl && me.inputEl.dom, checked = me.isChecked(value, me.inputValue);
+  if (inputEl) {
+    me.duringSetRawValue = true;
+    inputEl.checked = checked;
+    me.duringSetRawValue = false;
+    me.updateCheckedCls(checked);
+  }
+  me.checked = me.rawValue = checked;
+  if (!me.duringSetValue) {
+    me.lastValue = checked;
+  }
+  return checked;
+}, setValue:function(checked) {
+  var me = this, boxes, i, len, box;
+  if (Ext.isArray(checked)) {
+    boxes = me.getManager().getByName(me.name, me.getFormId()).items;
+    len = boxes.length;
+    for (i = 0; i < len; ++i) {
+      box = boxes[i];
+      box.setValue(Ext.Array.contains(checked, box.inputValue));
+    }
+  } else {
+    me.duringSetValue = true;
+    me.callParent(arguments);
+    delete me.duringSetValue;
+  }
+  return me;
+}, valueToRaw:Ext.identityFn, onChange:function(newVal, oldVal) {
+  var me = this, handler = me.handler;
+  me.updateCheckedCls(newVal);
+  if (handler) {
+    Ext.callback(handler, me.scope, [me, newVal], 0, me);
+  }
+  me.callParent(arguments);
+  if (me.reference && me.publishState) {
+    me.publishState('checked', newVal);
+  }
+}, resetOriginalValue:function(fromBoxInGroup) {
+  var me = this, boxes, box, len, i;
+  if (!fromBoxInGroup) {
+    boxes = me.getManager().getByName(me.name, me.getFormId()).items;
+    len = boxes.length;
+    for (i = 0; i < len; ++i) {
+      box = boxes[i];
+      if (box !== me) {
+        boxes[i].resetOriginalValue(true);
+      }
+    }
+  }
+  me.callParent();
+}, doDestroy:function() {
+  this.getManager().removeAtKey(this.id);
+  this.callParent();
+}, getManager:function() {
+  return Ext.form.CheckboxManager;
+}, onEnable:function() {
+  var me = this, inputEl = me.inputEl && me.inputEl.dom;
+  me.callParent();
+  if (inputEl) {
+    inputEl.disabled = me.readOnly;
+  }
+}, setReadOnly:function(readOnly) {
+  var me = this, inputEl = me.inputEl && me.inputEl.dom;
+  if (inputEl) {
+    inputEl.disabled = !!readOnly || me.disabled;
+  }
+  me.callParent(arguments);
+}, getFormId:function() {
+  var me = this, form;
+  if (!me.formId) {
+    form = me.up('form');
+    if (form) {
+      me.formId = form.id;
+    }
+  }
+  return me.formId;
+}, getFocusClsEl:function() {
+  return this.displayEl;
+}});
+Ext.define('Ext.theme.triton.form.field.Checkbox', {override:'Ext.form.field.Checkbox', compatibility:Ext.isIE8, initComponent:function() {
+  this.callParent();
+  Ext.on({show:'onGlobalShow', scope:this});
+}, onFocus:function(e) {
+  var focusClsEl;
+  this.callParent([e]);
+  focusClsEl = this.getFocusClsEl();
+  if (focusClsEl) {
+    focusClsEl.syncRepaint();
+  }
+}, onBlur:function(e) {
+  var focusClsEl;
+  this.callParent([e]);
+  focusClsEl = this.getFocusClsEl();
+  if (focusClsEl) {
+    focusClsEl.syncRepaint();
+  }
+}, onGlobalShow:function(cmp) {
+  if (cmp.isAncestor(this)) {
+    this.getFocusClsEl().syncRepaint();
+  }
+}});
+Ext.define('Ext.form.Label', {extend:Ext.Component, alias:'widget.label', autoEl:'label', maskOnDisable:false, getElConfig:function() {
+  var me = this;
+  me.html = me.text ? Ext.util.Format.htmlEncode(me.text) : me.html || '';
+  return Ext.apply(me.callParent(), {htmlFor:me.forId || ''});
+}, setText:function(text, encode) {
+  var me = this;
+  encode = encode !== false;
+  if (encode) {
+    me.text = text;
+    delete me.html;
+  } else {
+    me.html = text;
+    delete me.text;
+  }
+  if (me.rendered) {
+    me.el.dom.innerHTML = encode !== false ? Ext.util.Format.htmlEncode(text) : text;
+    me.updateLayout();
+  }
+  return me;
+}});
 Ext.define('Ext.form.Panel', {extend:Ext.panel.Panel, mixins:{fieldAncestor:Ext.form.FieldAncestor}, alias:'widget.form', alternateClassName:['Ext.FormPanel', 'Ext.form.FormPanel'], layout:'anchor', bodyAriaRole:'form', basicFormConfigs:['api', 'baseParams', 'errorReader', 'jsonSubmit', 'method', 'paramOrder', 'paramsAsHash', 'reader', 'standardSubmit', 'timeout', 'trackResetOnLoad', 'url', 'waitMsgTarget', 'waitTitle'], initComponent:function() {
   var me = this;
   if (me.frame) {
@@ -69228,6 +69595,273 @@ ariaMinText:'The date must be equal to or after {0}', maxText:'The date in this 
   }
   me.callParent([e]);
 }});
+Ext.define('Ext.form.field.FileButton', {extend:Ext.button.Button, alias:'widget.filebutton', childEls:['fileInputEl'], inputCls:Ext.baseCSSPrefix + 'form-file-input', cls:Ext.baseCSSPrefix + 'form-file-btn', preventDefault:false, tabIndex:undefined, useTabGuards:Ext.isIE || Ext.isEdge, promptCalled:false, autoEl:{tag:'div', unselectable:'on'}, afterTpl:['\x3cinput id\x3d"{id}-fileInputEl" data-ref\x3d"fileInputEl" class\x3d"{childElCls} {inputCls}" ', 'type\x3d"file" size\x3d"1" name\x3d"{inputName}" unselectable\x3d"on" ', 
+'\x3ctpl if\x3d"accept !\x3d null"\x3eaccept\x3d"{accept}"\x3c/tpl\x3e', '\x3ctpl if\x3d"tabIndex !\x3d null"\x3etabindex\x3d"{tabIndex}"\x3c/tpl\x3e', '\x3e'], keyMap:null, ariaEl:'fileInputEl', getAfterMarkup:function(values) {
+  return this.lookupTpl('afterTpl').apply(values);
+}, getTemplateArgs:function() {
+  var me = this, args;
+  args = me.callParent();
+  args.inputCls = me.inputCls;
+  args.inputName = me.inputName || me.id;
+  args.tabIndex = me.tabIndex != null ? me.tabIndex : null;
+  args.accept = me.accept || null;
+  args.role = me.ariaRole;
+  return args;
+}, afterRender:function() {
+  var me = this, listeners, cfg;
+  me.callParent(arguments);
+  listeners = {scope:me, mousedown:me.handlePrompt, keydown:me.handlePrompt, change:me.fireChange, focus:me.onFileFocus, blur:me.onFileBlur, destroyable:true};
+  if (me.useTabGuards) {
+    cfg = {tag:'span', role:'button', 'aria-hidden':'true', 'data-tabguard':'true', style:{height:0, width:0}};
+    cfg.tabIndex = me.tabIndex != null ? me.tabIndex : 0;
+    me.beforeInputGuard = me.el.createChild(cfg, me.fileInputEl);
+    me.afterInputGuard = me.el.createChild(cfg);
+    me.afterInputGuard.insertAfter(me.fileInputEl);
+    me.beforeInputGuard.on('focus', me.onInputGuardFocus, me);
+    me.afterInputGuard.on('focus', me.onInputGuardFocus, me);
+    listeners.keydown = me.onFileInputKeydown;
+  }
+  me.fileInputElListeners = me.fileInputEl.on(listeners);
+}, doDestroy:function() {
+  var me = this;
+  if (me.fileInputElListeners) {
+    me.fileInputElListeners.destroy();
+  }
+  if (me.beforeInputGuard) {
+    me.beforeInputGuard.destroy();
+    me.beforeInputGuard = null;
+  }
+  if (me.afterInputGuard) {
+    me.afterInputGuard.destroy();
+    me.afterInputGuard = null;
+  }
+  me.callParent();
+}, fireChange:function(e) {
+  this.fireEvent('change', this, e, this.fileInputEl.dom.value);
+}, createFileInput:function(isTemporary) {
+  var me = this, fileInputEl, listeners;
+  fileInputEl = me.fileInputEl = me.el.createChild({name:me.inputName || me.id, id:!isTemporary ? me.id + '-fileInputEl' : undefined, cls:me.inputCls + (me.getInherited().rtl ? ' ' + Ext.baseCSSPrefix + 'rtl' : ''), tag:'input', type:'file', size:1, unselectable:'on'}, me.afterInputGuard);
+  fileInputEl.dom.setAttribute('data-componentid', me.id);
+  if (me.tabIndex != null) {
+    me.setTabIndex(me.tabIndex);
+  }
+  if (me.accept) {
+    fileInputEl.dom.setAttribute('accept', me.accept);
+  }
+  listeners = {scope:me, change:me.fireChange, mousedown:me.handlePrompt, keydown:me.handlePrompt, focus:me.onFileFocus, blur:me.onFileBlur};
+  if (me.useTabGuards) {
+    listeners.keydown = me.onFileInputKeydown;
+  }
+  fileInputEl.on(listeners);
+}, handlePrompt:function(e) {
+  var key;
+  if (e.type == 'keydown') {
+    key = e.getKey();
+    this.promptCalled = !Ext.isIE && key === e.ENTER || key === e.SPACE ? true : false;
+  } else {
+    this.promptCalled = true;
+  }
+}, onFileFocus:function(e) {
+  var ownerCt = this.ownerCt;
+  if (!this.hasFocus) {
+    this.onFocus(e);
+  }
+  if (ownerCt && !ownerCt.hasFocus) {
+    ownerCt.onFocus(e);
+  }
+}, onFileBlur:function(e) {
+  var ownerCt = this.ownerCt;
+  if (this.promptCalled) {
+    this.promptCalled = false;
+    e.preventDefault();
+    return;
+  }
+  if (this.hasFocus) {
+    this.onBlur(e);
+  }
+  if (ownerCt && ownerCt.hasFocus) {
+    ownerCt.onBlur(e);
+  }
+}, onInputGuardFocus:function(e) {
+  this.fileInputEl.focus();
+}, onFileInputKeydown:function(e) {
+  var key = e.getKey(), focusTo;
+  if (key === e.TAB) {
+    focusTo = e.shiftKey ? this.beforeInputGuard : this.afterInputGuard;
+    if (focusTo) {
+      focusTo.suspendEvent('focus');
+      focusTo.focus();
+      Ext.defer(function() {
+        focusTo.resumeEvent('focus');
+      }, 1);
+    }
+  } else {
+    if (key === e.ENTER || key === e.SPACE) {
+      this.handlePrompt(e);
+    }
+  }
+  return true;
+}, reset:function(remove) {
+  var me = this;
+  if (remove) {
+    me.fileInputEl.destroy();
+  }
+  me.createFileInput(!remove);
+  if (remove) {
+    me.ariaEl = me.fileInputEl;
+  }
+}, restoreInput:function(el) {
+  var me = this;
+  me.fileInputEl.destroy();
+  el = Ext.get(el);
+  if (me.useTabGuards) {
+    el.insertBefore(me.afterInputGuard);
+  } else {
+    me.el.appendChild(el);
+  }
+  me.fileInputEl = el;
+}, onDisable:function() {
+  this.callParent();
+  this.fileInputEl.dom.disabled = true;
+}, onEnable:function() {
+  this.callParent();
+  this.fileInputEl.dom.disabled = false;
+}, privates:{getFocusEl:function() {
+  return this.fileInputEl;
+}, getFocusClsEl:function() {
+  return this.el;
+}, setTabIndex:function(tabIndex) {
+  var me = this;
+  if (!me.focusable) {
+    return;
+  }
+  me.tabIndex = tabIndex;
+  if (!me.rendered || me.destroying || me.destroyed) {
+    return;
+  }
+  if (me.useTabGuards) {
+    me.fileInputEl.dom.setAttribute('tabIndex', -1);
+    me.beforeInputGuard.dom.setAttribute('tabIndex', tabIndex);
+    me.afterInputGuard.dom.setAttribute('tabIndex', tabIndex);
+  } else {
+    me.fileInputEl.dom.setAttribute('tabIndex', tabIndex);
+  }
+}}});
+Ext.define('Ext.form.trigger.Component', {extend:Ext.form.trigger.Trigger, alias:'trigger.component', cls:Ext.baseCSSPrefix + 'form-trigger-cmp', onFieldRender:function() {
+  var me = this, component = me.component;
+  me.callParent();
+  if (!component.isComponent && !component.isWidget) {
+    component = Ext.widget(component);
+  }
+  me.component = component;
+  component.render(me.el);
+}, destroy:function() {
+  var component = this.component;
+  if (component.isComponent || component.isWidget) {
+    component.destroy();
+  }
+  this.component = null;
+  this.callParent();
+}});
+Ext.define('Ext.form.field.File', {extend:Ext.form.field.Text, alias:['widget.filefield', 'widget.fileuploadfield'], alternateClassName:['Ext.form.FileUploadField', 'Ext.ux.form.FileUploadField', 'Ext.form.File'], emptyText:undefined, needArrowKeys:false, triggers:{filebutton:{type:'component', hideOnReadOnly:false, preventMouseDown:false}}, buttonText:'Browse...', buttonOnly:false, buttonMargin:3, clearOnSubmit:true, extraFieldBodyCls:Ext.baseCSSPrefix + 'form-file-wrap', inputCls:Ext.baseCSSPrefix + 
+'form-text-file', readOnly:true, editable:false, submitValue:false, triggerNoEditCls:'', childEls:['browseButtonWrap'], applyTriggers:function(triggers) {
+  var me = this, triggerCfg = (triggers || {}).filebutton;
+  if (triggerCfg) {
+    triggerCfg.component = Ext.apply({xtype:'filebutton', ownerCt:me, id:me.id + '-button', ui:me.ui, disabled:me.disabled, tabIndex:me.tabIndex, text:me.buttonText, style:me.buttonOnly ? '' : me.getButtonMarginProp() + me.buttonMargin + 'px', accept:me.accept, inputName:me.getName(), listeners:{scope:me, change:me.onFileChange}}, me.buttonConfig);
+    return me.callParent([triggers]);
+  } else {
+    Ext.raise(me.$className + ' requires a valid trigger config containing "filebutton" specification');
+  }
+}, getSubTplData:function(fieldData) {
+  var data = this.callParent([fieldData]);
+  data.tabIdx = -1;
+  return data;
+}, onRender:function() {
+  var me = this, inputEl, button, buttonEl, trigger;
+  me.callParent(arguments);
+  inputEl = me.inputEl;
+  inputEl.dom.name = '';
+  inputEl.on('focus', me.onInputFocus, me);
+  inputEl.on('mousedown', me.onInputMouseDown, me);
+  trigger = me.getTrigger('filebutton');
+  button = me.button = trigger.component;
+  me.fileInputEl = button.fileInputEl;
+  buttonEl = button.el;
+  if (me.buttonOnly) {
+    me.inputWrap.setDisplayed(false);
+    me.shrinkWrap = 3;
+  }
+  trigger.el.setWidth(buttonEl.getWidth() + buttonEl.getMargin('lr'));
+  if (Ext.isIE8) {
+    me.button.getEl().repaint();
+  }
+}, getTriggerMarkup:function() {
+  return '\x3ctd id\x3d"' + this.id + '-browseButtonWrap" data-ref\x3d"browseButtonWrap" role\x3d"presentation"\x3e\x3c/td\x3e';
+}, onFileChange:function(button, e, value) {
+  this.duringFileSelect = true;
+  Ext.form.field.File.superclass.setValue.call(this, value);
+  delete this.duringFileSelect;
+}, didValueChange:function() {
+  return !!this.duringFileSelect;
+}, setEmptyText:Ext.emptyFn, setValue:Ext.emptyFn, reset:function() {
+  var me = this, clear = me.clearOnSubmit;
+  if (me.rendered) {
+    me.button.reset(clear);
+    me.fileInputEl = me.button.fileInputEl;
+    if (clear) {
+      me.inputEl.dom.value = '';
+      Ext.form.field.File.superclass.setValue.call(this, null);
+    }
+  }
+  me.callParent();
+}, onShow:function() {
+  this.callParent();
+  this.button.updateLayout();
+}, onDisable:function() {
+  this.callParent();
+  this.button.disable();
+}, onEnable:function() {
+  this.callParent();
+  this.button.enable();
+}, isFileUpload:Ext.returnTrue, extractFileInput:function() {
+  var me = this, fileInput;
+  if (me.rendered) {
+    fileInput = me.button.fileInputEl.dom;
+    me.reset();
+  } else {
+    fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.className = Ext.baseCSSPrefix + 'hidden-display';
+    fileInput.name = me.getName();
+  }
+  return fileInput;
+}, restoreInput:function(el) {
+  if (this.rendered) {
+    var button = this.button;
+    button.restoreInput(el);
+    this.fileInputEl = button.fileInputEl;
+  }
+}, doDestroy:function() {
+  this.fileInputEl = this.button = null;
+  this.callParent();
+}, getButtonMarginProp:function() {
+  return this.getInherited().rtl ? 'margin-right:' : 'margin-left:';
+}, onInputFocus:function(e) {
+  var me = this;
+  if (me.selectOnFocus && document.activeElement === me.inputEl.dom) {
+    me.inputEl.dom.select();
+  }
+  me.focus();
+  if (Ext.isIE9m) {
+    me.fileInputEl.addCls(Ext.baseCSSPrefix + 'position-relative');
+    me.fileInputEl.removeCls(Ext.baseCSSPrefix + 'position-relative');
+  }
+}, onInputMouseDown:function(e) {
+  e.preventDefault();
+  this.focus();
+}, privates:{getFocusEl:function() {
+  return this.button;
+}, getFocusClsEl:Ext.privateFn}});
 Ext.define('Ext.tip.Tip', {extend:Ext.panel.Panel, xtype:'tip', alternateClassName:'Ext.Tip', minWidth:40, maxWidth:500, shadow:'sides', constrainPosition:true, autoRender:true, hidden:true, baseCls:Ext.baseCSSPrefix + 'tip', focusOnToFront:false, maskOnDisable:false, closeAction:'hide', alwaysFramed:true, frameHeader:false, initComponent:function() {
   var me = this;
   me.floating = Ext.apply({}, {shadow:me.shadow}, me.self.prototype.floating);
@@ -69810,7 +70444,953 @@ Ext.define('Ext.tip.QuickTipManager', {singleton:true, alternateClassName:'Ext.Q
   var tip = this.tip;
   tip.register.apply(tip, arguments);
 }});
+Ext.define('Ext.picker.Color', {extend:Ext.Component, alias:'widget.colorpicker', alternateClassName:'Ext.ColorPalette', focusable:true, componentCls:Ext.baseCSSPrefix + 'color-picker', selectedCls:Ext.baseCSSPrefix + 'color-picker-selected', itemCls:Ext.baseCSSPrefix + 'color-picker-item', value:null, clickEvent:'click', allowReselect:false, colors:['000000', '993300', '333300', '003300', '003366', '000080', '333399', '333333', '800000', 'FF6600', '808000', '008000', '008080', '0000FF', '666699', 
+'808080', 'FF0000', 'FF9900', '99CC00', '339966', '33CCCC', '3366FF', '800080', '969696', 'FF00FF', 'FFCC00', 'FFFF00', '00FF00', '00FFFF', '00CCFF', '993366', 'C0C0C0', 'FF99CC', 'FFCC99', 'FFFF99', 'CCFFCC', 'CCFFFF', '99CCFF', 'CC99FF', 'FFFFFF'], colorRe:/(?:^|\s)color-(.{6})(?:\s|$)/, renderTpl:['\x3ctpl for\x3d"colors"\x3e', '\x3ca href\x3d"#" role\x3d"button" class\x3d"color-{.} {parent.itemCls}" hidefocus\x3d"on"\x3e', '\x3cspan class\x3d"{parent.itemCls}-inner" style\x3d"background:#{.}"\x3e\x26#160;\x3c/span\x3e', 
+'\x3c/a\x3e', '\x3c/tpl\x3e'], initComponent:function() {
+  var me = this;
+  me.callParent(arguments);
+  if (me.handler) {
+    me.on('select', me.handler, me.scope, true);
+  }
+}, initRenderData:function() {
+  var me = this;
+  return Ext.apply(me.callParent(), {itemCls:me.itemCls, colors:me.colors});
+}, onRender:function() {
+  var me = this, clickEvent = me.clickEvent;
+  me.callParent(arguments);
+  me.mon(me.el, clickEvent, me.handleClick, me, {delegate:'a'});
+  if (clickEvent !== 'click') {
+    me.mon(me.el, 'click', Ext.emptyFn, me, {delegate:'a', stopEvent:true});
+  }
+}, afterRender:function() {
+  var me = this, value;
+  me.callParent(arguments);
+  if (me.value) {
+    value = me.value;
+    me.value = null;
+    me.select(value, true);
+  }
+}, handleClick:function(event) {
+  var me = this, color;
+  event.stopEvent();
+  if (!me.disabled) {
+    color = event.currentTarget.className.match(me.colorRe)[1];
+    me.select(color.toUpperCase());
+  }
+}, select:function(color, suppressEvent) {
+  var me = this, selectedCls = me.selectedCls, value = me.value, el, item;
+  color = color.replace('#', '');
+  if (!me.rendered) {
+    me.value = color;
+    return;
+  }
+  if (color !== value || me.allowReselect) {
+    el = me.el;
+    if (me.value) {
+      item = el.down('a.color-' + value, true);
+      Ext.fly(item).removeCls(selectedCls);
+    }
+    item = el.down('a.color-' + color, true);
+    Ext.fly(item).addCls(selectedCls);
+    me.value = color;
+    if (suppressEvent !== true) {
+      me.fireEvent('select', me, color);
+    }
+  }
+}, clear:function() {
+  var me = this, value = me.value, el;
+  if (value && me.rendered) {
+    el = me.el.down('a.color-' + value, true);
+    Ext.fly(el).removeCls(me.selectedCls);
+  }
+  me.value = null;
+}, getValue:function() {
+  return this.value || null;
+}});
+Ext.define('Ext.layout.component.field.HtmlEditor', {extend:Ext.layout.component.field.FieldContainer, alias:['layout.htmleditor'], type:'htmleditor', naturalHeight:150, naturalWidth:300, beginLayout:function(ownerContext) {
+  var owner = this.owner, dom;
+  if (Ext.isGecko) {
+    dom = owner.textareaEl.dom;
+    this.lastValue = dom.value;
+    dom.value = '';
+  }
+  this.callParent(arguments);
+  ownerContext.toolbarContext = ownerContext.context.getCmp(owner.toolbar);
+  ownerContext.inputCmpContext = ownerContext.context.getCmp(owner.inputCmp);
+  ownerContext.bodyCellContext = ownerContext.getEl('bodyEl');
+  ownerContext.textAreaContext = ownerContext.getEl('textareaEl');
+  ownerContext.iframeContext = ownerContext.getEl('iframeEl');
+}, beginLayoutCycle:function(ownerContext) {
+  var me = this, widthModel = ownerContext.widthModel, heightModel = ownerContext.heightModel, owner = me.owner, iframeEl = owner.iframeEl, textareaEl = owner.textareaEl, height = heightModel.natural || heightModel.shrinkWrap ? me.naturalHeight : '';
+  me.callParent(arguments);
+  if (widthModel.shrinkWrap) {
+    iframeEl.setStyle('width', '');
+    textareaEl.setStyle('width', '');
+  } else {
+    if (widthModel.natural) {
+      ownerContext.bodyCellContext.setWidth(me.naturalWidth);
+    }
+  }
+  iframeEl.setStyle('height', height);
+  textareaEl.setStyle('height', height);
+}, finishedLayout:function() {
+  var owner = this.owner;
+  this.callParent(arguments);
+  if (Ext.isGecko) {
+    owner.textareaEl.dom.value = this.lastValue;
+  }
+}});
 Ext.define('Ext.toolbar.Separator', {extend:Ext.toolbar.Item, alias:'widget.tbseparator', alternateClassName:'Ext.Toolbar.Separator', baseCls:Ext.baseCSSPrefix + 'toolbar-separator', ariaRole:'separator'});
+Ext.define('Ext.layout.container.boxOverflow.Menu', {extend:Ext.layout.container.boxOverflow.None, alternateClassName:'Ext.layout.boxOverflow.Menu', alias:['box.overflow.menu', 'box.overflow.Menu'], noItemsMenuText:'\x3cdiv class\x3d"' + Ext.baseCSSPrefix + 'toolbar-no-items" role\x3d"menuitem"\x3e(None)\x3c/div\x3e', menuCls:Ext.baseCSSPrefix + 'box-menu', constructor:function(config) {
+  var me = this;
+  me.callParent([config]);
+  me.menuItems = [];
+}, beginLayout:function(ownerContext) {
+  this.callParent([ownerContext]);
+  this.clearOverflow(ownerContext);
+}, beginLayoutCycle:function(ownerContext, firstCycle) {
+  this.callParent([ownerContext, firstCycle]);
+  if (!firstCycle) {
+    this.clearOverflow(ownerContext);
+    this.layout.cacheChildItems(ownerContext);
+  }
+}, onRemove:function(comp) {
+  Ext.Array.remove(this.menuItems, comp);
+}, clearItem:function(comp) {
+  var menu = comp.menu;
+  if (comp.isButton && menu) {
+    comp.setMenu(menu, false);
+  }
+}, getSuffixConfig:function() {
+  var me = this, layout = me.layout, owner = layout.owner, oid = owner.id;
+  me.menu = new Ext.menu.Menu({listeners:{scope:me, beforeshow:me.beforeMenuShow}});
+  me.menuTrigger = new Ext.button.Button({id:oid + '-menu-trigger', cls:me.menuCls + '-after ' + Ext.baseCSSPrefix + 'toolbar-item', plain:owner.usePlainButtons, ownerCt:owner, ownerLayout:layout, iconCls:Ext.baseCSSPrefix + me.getOwnerType(owner) + '-more-icon', ui:owner.defaultButtonUI || 'default', menu:me.menu, showEmptyMenu:true, getSplitCls:function() {
+    return '';
+  }});
+  return me.menuTrigger.getRenderTree();
+}, getOverflowCls:function(direction) {
+  return this.menuCls + '-body-' + direction;
+}, handleOverflow:function(ownerContext) {
+  var me = this, layout = me.layout;
+  me.showTrigger(ownerContext);
+  if (layout.direction !== 'vertical') {
+    me.menuTrigger.setLocalY((ownerContext.state.boxPlan.maxSize - me.menuTrigger[layout.names.getHeight]()) / 2);
+  }
+  return {reservedSpace:me.triggerTotalWidth};
+}, captureChildElements:function() {
+  var me = this, menuTrigger = me.menuTrigger, names = me.layout.names;
+  if (menuTrigger.rendering) {
+    menuTrigger.finishRender();
+    me.triggerTotalWidth = menuTrigger[names.getWidth]() + menuTrigger.el.getMargin(names.parallelMargins);
+  }
+}, clearOverflow:function(ownerContext) {
+  var me = this, items = me.menuItems, length = items.length, owner = me.layout.owner, asLayoutRoot = owner._asLayoutRoot, item, i;
+  owner.suspendLayouts();
+  me.captureChildElements();
+  me.hideTrigger();
+  owner.resumeLayouts();
+  for (i = 0; i < length; i++) {
+    item = items[i];
+    item.suspendLayouts();
+    item.show();
+    me.clearItem(item);
+    item.resumeLayouts(asLayoutRoot);
+  }
+  items.length = 0;
+}, showTrigger:function(ownerContext) {
+  var me = this, layout = me.layout, owner = layout.owner, names = layout.names, startProp = names.x, sizeProp = names.width, plan = ownerContext.state.boxPlan, available = plan.targetSize[sizeProp], childItems = ownerContext.childItems, menuTrigger = me.menuTrigger, menuItems = me.menuItems, childContext, comp, i, props, len;
+  menuTrigger.suspendLayouts();
+  menuTrigger.show();
+  menuTrigger.resumeLayouts(me._asLayoutRoot);
+  available -= me.triggerTotalWidth;
+  owner.suspendLayouts();
+  for (i = 0, len = menuItems.length; i < len; ++i) {
+    me.clearItem(menuItems[i]);
+  }
+  menuItems.length = 0;
+  for (i = 0, len = childItems.length; i < len; i++) {
+    childContext = childItems[i];
+    props = childContext.props;
+    if (props[startProp] + props[sizeProp] > available) {
+      comp = childContext.target;
+      me.menuItems.push(comp);
+      comp.hide();
+    }
+  }
+  owner.resumeLayouts();
+}, hideTrigger:function() {
+  var menuTrigger = this.menuTrigger;
+  if (menuTrigger) {
+    menuTrigger.hide();
+  }
+}, beforeMenuShow:function(menu) {
+  var me = this, items = me.menuItems, i = 0, len = items.length, item, prev, needsSep = function(group, prev) {
+    return group.isXType('buttongroup') && !(prev instanceof Ext.toolbar.Separator);
+  };
+  menu.suspendLayouts();
+  menu.removeAll(false);
+  for (; i < len; i++) {
+    item = items[i];
+    if (!i && item instanceof Ext.toolbar.Separator) {
+      continue;
+    }
+    if (prev && (needsSep(item, prev) || needsSep(prev, item))) {
+      menu.add('-');
+    }
+    me.addComponentToMenu(menu, item);
+    prev = item;
+  }
+  if (menu.items.length < 1) {
+    menu.add(me.noItemsMenuText);
+  }
+  menu.resumeLayouts();
+}, createMenuConfig:function(component, hideOnClick) {
+  var config = Ext.apply({}, component.initialConfig), group = component.toggleGroup;
+  Ext.copy(config, component, ['iconCls', 'icon', 'itemId', 'disabled', 'handler', 'scope', 'menu', 'tabIndex']);
+  Ext.applyIf(config, {hideOnClick:hideOnClick, destroyMenu:false, listeners:null});
+  config.text = component.overflowText || component.text;
+  config.masterComponent = component;
+  if (component.isFormField) {
+    config.value = component.getValue();
+    if (component instanceof Ext.form.field.Checkbox) {
+      config = {xtype:'menucheckitem', group:component.isRadio ? component.name + '_clone' : undefined, text:component.boxLabel || component.fieldLabel, name:component.name, masterComponent:component, checked:component.getValue(), hideOnClick:false, checkChangeDisabled:true};
+    }
+    config.listeners = {change:function(c, newVal, oldVal) {
+      c.masterComponent.setValue(newVal);
+    }};
+    component.on('change', function(c, newVal, oldVal) {
+      c.overflowClone.setValue(newVal);
+    });
+  } else {
+    if (group || component.enableToggle) {
+      Ext.apply(config, {hideOnClick:false, group:group, checked:component.pressed, handler:function(item, e) {
+        item.masterComponent.onClick(e);
+      }});
+    }
+  }
+  if (component.isButton && !component.changeListenersAdded) {
+    component.on({textchange:this.onButtonAttrChange, iconchange:this.onButtonAttrChange, toggle:this.onButtonToggle});
+    component.changeListenersAdded = true;
+  }
+  component.on({enable:this.onComponentStatusChange, disable:this.onComponentStatusChange});
+  delete config.margin;
+  delete config.ownerCt;
+  delete config.xtype;
+  delete config.id;
+  delete config.itemId;
+  return config;
+}, onButtonAttrChange:function(btn) {
+  var clone = btn.overflowClone;
+  clone.suspendLayouts();
+  clone.setText(btn.text);
+  clone.setIcon(btn.icon);
+  clone.setIconCls(btn.iconCls);
+  clone.resumeLayouts(true);
+}, onButtonToggle:function(btn, state) {
+  if (btn.overflowClone.checked !== state) {
+    btn.overflowClone.setChecked(state);
+  }
+}, onComponentStatusChange:function(cmp) {
+  var clone = cmp.overflowClone;
+  if (clone) {
+    clone.setDisabled(cmp.disabled);
+  }
+}, addComponentToMenu:function(menu, component) {
+  var me = this, i, items, iLen;
+  if (component instanceof Ext.toolbar.Fill) {
+    return;
+  } else {
+    if (component instanceof Ext.toolbar.Separator) {
+      menu.add('-');
+    } else {
+      if (component.overflowClone) {
+        menu.add(component.overflowClone);
+      } else {
+        if (component.isComponent) {
+          if (component.isXType('splitbutton')) {
+            component.overflowClone = menu.add(me.createMenuConfig(component, true));
+          } else {
+            if (component.isXType('button')) {
+              component.overflowClone = menu.add(me.createMenuConfig(component, !component.menu));
+            } else {
+              if (component.isXType('buttongroup')) {
+                items = component.items.items;
+                iLen = items.length;
+                for (i = 0; i < iLen; i++) {
+                  me.addComponentToMenu(menu, items[i]);
+                }
+              } else {
+                if (component.isCheckbox) {
+                  component.overflowClone = menu.add(me.createMenuConfig(component));
+                  Ext.apply(component.overflowClone, {getValue:function() {
+                    return component.overflowClone.checked;
+                  }, setValue:function() {
+                    component.overflowClone.setChecked(component.getValue());
+                  }});
+                  component.overflowClone.on('click', function(item) {
+                    item.setChecked(item.masterComponent.isRadio ? true : !item.checked);
+                    item.fireEvent('change', item, item.checked);
+                  });
+                } else {
+                  component.overflowClone = menu.add(Ext.create(Ext.getClassName(component), me.createMenuConfig(component)));
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}, destroy:function() {
+  Ext.destroy(this.menu, this.menuTrigger);
+  this.callParent();
+}});
+Ext.define('Ext.form.field.HtmlEditor', {extend:Ext.form.FieldContainer, mixins:{field:Ext.form.field.Field}, alias:'widget.htmleditor', alternateClassName:'Ext.form.HtmlEditor', focusable:true, componentLayout:'htmleditor', textareaCls:Ext.baseCSSPrefix + 'htmleditor-textarea', componentTpl:['{beforeTextAreaTpl}', '\x3ctextarea id\x3d"{id}-textareaEl" data-ref\x3d"textareaEl" name\x3d"{name}" tabindex\x3d"-1" {inputAttrTpl}', ' class\x3d"{textareaCls}" autocomplete\x3d"off"\x3e', '{[Ext.util.Format.htmlEncode(values.value)]}', 
+'\x3c/textarea\x3e', '{afterTextAreaTpl}', '{beforeIFrameTpl}', '\x3ciframe id\x3d"{id}-iframeEl" data-ref\x3d"iframeEl" name\x3d"{iframeName}" frameBorder\x3d"0" {iframeAttrTpl}', ' src\x3d"{iframeSrc}" class\x3d"{iframeCls}"\x3e\x3c/iframe\x3e', '{afterIFrameTpl}', {disableFormats:true}], stretchInputElFixed:true, subTplInsertions:['beforeTextAreaTpl', 'afterTextAreaTpl', 'beforeIFrameTpl', 'afterIFrameTpl', 'iframeAttrTpl', 'inputAttrTpl'], enableFormat:true, enableFontSize:true, enableColors:true, 
+enableAlignments:true, enableLists:true, enableSourceEdit:true, enableLinks:true, enableFont:true, createLinkText:'Please enter the URL for the link:', defaultLinkValue:'http:/' + '/', fontFamilies:['Arial', 'Courier New', 'Tahoma', 'Times New Roman', 'Verdana'], defaultValue:Ext.isOpera ? '\x26#160;' : '\x26#8203;', extraFieldBodyCls:Ext.baseCSSPrefix + 'html-editor-wrap', defaultButtonUI:'default-toolbar', buttonDefaults:null, initialized:false, activated:false, sourceEditMode:false, iframePad:3, 
+hideMode:'offsets', layout:{type:'vbox', align:'stretch'}, maskOnDisable:true, containerElCls:Ext.baseCSSPrefix + 'html-editor-container', reStripQuotes:/^['"]*|['"]*$/g, textAlignRE:/text-align:(.*?);/i, safariNonsenseRE:/\sclass="(?:Apple-style-span|Apple-tab-span|khtml-block-placeholder)"/gi, nonDigitsRE:/\D/g, initComponent:function() {
+  var me = this;
+  me.items = [me.createToolbar(), me.createInputCmp()];
+  if (me.value == null) {
+    me.value = '';
+  }
+  me.callParent(arguments);
+  me.initField();
+}, createInputCmp:function() {
+  this.inputCmp = Ext.widget(this.getInputCmpCfg());
+  return this.inputCmp;
+}, getInputCmpCfg:function() {
+  var me = this, id = me.id + '-inputCmp', data = {id:id, name:me.name, textareaCls:me.textareaCls + ' ' + Ext.baseCSSPrefix + 'hidden', value:me.value, iframeName:Ext.id(), iframeSrc:Ext.SSL_SECURE_URL, iframeCls:Ext.baseCSSPrefix + 'htmleditor-iframe'};
+  me.getInsertionRenderData(data, me.subTplInsertions);
+  return {flex:1, xtype:'component', tpl:me.lookupTpl('componentTpl'), childEls:['iframeEl', 'textareaEl'], id:id, cls:Ext.baseCSSPrefix + 'html-editor-input', data:data};
+}, createToolbar:function() {
+  this.toolbar = Ext.widget(this.getToolbarCfg());
+  return this.toolbar;
+}, getToolbarCfg:function() {
+  var me = this, items = [], i, tipsEnabled = Ext.quickTipsActive && Ext.tip.QuickTipManager.isEnabled(), baseCSSPrefix = Ext.baseCSSPrefix, fontSelectItem, undef;
+  function btn(id, toggle, handler) {
+    return Ext.merge({itemId:id, cls:baseCSSPrefix + 'btn-icon', iconCls:baseCSSPrefix + 'edit-' + id, enableToggle:toggle !== false, scope:me, handler:handler || me.relayBtnCmd, clickEvent:'mousedown', tooltip:tipsEnabled ? me.buttonTips[id] : undef, overflowText:me.buttonTips[id].title || undef, tabIndex:-1}, me.buttonDefaults);
+  }
+  if (me.enableFont) {
+    fontSelectItem = Ext.widget('component', {itemId:'fontSelect', renderTpl:['\x3cselect id\x3d"{id}-selectEl" data-ref\x3d"selectEl" class\x3d"' + baseCSSPrefix + 'font-select"\x3e', '\x3c/select\x3e'], childEls:['selectEl'], afterRender:function() {
+      me.fontSelect = this.selectEl;
+      Ext.Component.prototype.afterRender.apply(this, arguments);
+    }, onDisable:function() {
+      var selectEl = this.selectEl;
+      if (selectEl) {
+        selectEl.dom.disabled = true;
+      }
+      Ext.Component.prototype.onDisable.apply(this, arguments);
+    }, onEnable:function() {
+      var selectEl = this.selectEl;
+      if (selectEl) {
+        selectEl.dom.disabled = false;
+      }
+      Ext.Component.prototype.onEnable.apply(this, arguments);
+    }, listeners:{change:function() {
+      me.win.focus();
+      me.relayCmd('fontName', me.fontSelect.dom.value);
+      me.deferFocus();
+    }, element:'selectEl'}});
+    items.push(fontSelectItem, '-');
+  }
+  if (me.enableFormat) {
+    items.push(btn('bold'), btn('italic'), btn('underline'));
+  }
+  if (me.enableFontSize) {
+    items.push('-', btn('increasefontsize', false, me.adjustFont), btn('decreasefontsize', false, me.adjustFont));
+  }
+  if (me.enableColors) {
+    items.push('-', Ext.merge({itemId:'forecolor', cls:baseCSSPrefix + 'btn-icon', iconCls:baseCSSPrefix + 'edit-forecolor', overflowText:me.buttonTips.forecolor.title, tooltip:tipsEnabled ? me.buttonTips.forecolor || undef : undef, tabIndex:-1, menu:Ext.widget('menu', {plain:true, items:[{xtype:'colorpicker', allowReselect:true, focus:Ext.emptyFn, value:'000000', plain:true, clickEvent:'mousedown', handler:function(cp, color) {
+      me.relayCmd('forecolor', Ext.isWebKit || Ext.isIE || Ext.isEdge ? '#' + color : color);
+      this.up('menu').hide();
+    }}]})}, me.buttonDefaults), Ext.merge({itemId:'backcolor', cls:baseCSSPrefix + 'btn-icon', iconCls:baseCSSPrefix + 'edit-backcolor', overflowText:me.buttonTips.backcolor.title, tooltip:tipsEnabled ? me.buttonTips.backcolor || undef : undef, tabIndex:-1, menu:Ext.widget('menu', {plain:true, items:[{xtype:'colorpicker', focus:Ext.emptyFn, value:'FFFFFF', plain:true, allowReselect:true, clickEvent:'mousedown', handler:function(cp, color) {
+      if (Ext.isGecko) {
+        me.execCmd('useCSS', false);
+        me.execCmd('hilitecolor', '#' + color);
+        me.execCmd('useCSS', true);
+        me.deferFocus();
+      } else {
+        me.relayCmd(Ext.isOpera ? 'hilitecolor' : 'backcolor', Ext.isWebKit || Ext.isIE || Ext.isEdge || Ext.isOpera ? '#' + color : color);
+      }
+      this.up('menu').hide();
+    }}]})}, me.buttonDefaults));
+  }
+  if (me.enableAlignments) {
+    items.push('-', btn('justifyleft'), btn('justifycenter'), btn('justifyright'));
+  }
+  if (me.enableLinks) {
+    items.push('-', btn('createlink', false, me.createLink));
+  }
+  if (me.enableLists) {
+    items.push('-', btn('insertorderedlist'), btn('insertunorderedlist'));
+  }
+  if (me.enableSourceEdit) {
+    items.push('-', btn('sourceedit', true, function() {
+      me.toggleSourceEdit(!me.sourceEditMode);
+    }));
+  }
+  for (i = 0; i < items.length; i++) {
+    if (items[i].itemId !== 'sourceedit') {
+      items[i].disabled = true;
+    }
+  }
+  return {xtype:'toolbar', defaultButtonUI:me.defaultButtonUI, cls:Ext.baseCSSPrefix + 'html-editor-tb', enableOverflow:true, items:items, listeners:{click:function(e) {
+    e.preventDefault();
+  }, element:'el'}};
+}, getMaskTarget:function() {
+  return Ext.isGecko ? this.inputCmp.el : this.bodyEl;
+}, setReadOnly:function(readOnly) {
+  var me = this, textareaEl = me.textareaEl, iframeEl = me.iframeEl, body;
+  me.readOnly = readOnly;
+  if (textareaEl) {
+    textareaEl.dom.readOnly = readOnly;
+  }
+  if (me.initialized) {
+    body = me.getEditorBody();
+    if (Ext.isIE) {
+      iframeEl.setDisplayed(false);
+      body.contentEditable = !readOnly;
+      iframeEl.setDisplayed(true);
+    } else {
+      me.setDesignMode(!readOnly);
+    }
+    if (body) {
+      body.style.cursor = readOnly ? 'default' : 'text';
+    }
+    me.disableItems(readOnly);
+  }
+}, getDocMarkup:function() {
+  var me = this, h = me.iframeEl.getHeight() - me.iframePad * 2;
+  return Ext.String.format('\x3c!DOCTYPE html\x3e' + '\x3chtml\x3e\x3chead\x3e\x3cstyle type\x3d"text/css"\x3e' + (Ext.isOpera || Ext.isIE ? 'p{margin:0;}' : '') + 'body{border:0;margin:0;padding:{0}px;direction:' + (me.rtl ? 'rtl;' : 'ltr;') + (Ext.isIE8 ? Ext.emptyString : 'min-') + 'height:{1}px;box-sizing:border-box;-moz-box-sizing:border-box;-webkit-box-sizing:border-box;cursor:text;background-color:white;' + (Ext.isIE ? '' : 'font-size:12px;font-family:{2}') + '}\x3c/style\x3e\x3c/head\x3e\x3cbody\x3e\x3c/body\x3e\x3c/html\x3e', 
+  me.iframePad, h, me.defaultFont);
+}, getEditorBody:function() {
+  var doc = this.getDoc();
+  return doc && doc.body;
+}, getDoc:function() {
+  return this.iframeEl.dom.contentDocument || this.getWin().document;
+}, getWin:function() {
+  return this.iframeEl.dom.contentWindow || window.frames[this.iframeEl.dom.name];
+}, initDefaultFont:function() {
+  var me = this, selIdx = 0, fonts, font, select, option, i, len, lower;
+  if (!me.defaultFont) {
+    font = me.textareaEl.getStyle('font-family');
+    font = Ext.String.capitalize(font.split(',')[0]);
+    fonts = Ext.Array.clone(me.fontFamilies);
+    Ext.Array.include(fonts, font);
+    fonts.sort();
+    me.defaultFont = font;
+    select = me.down('#fontSelect').selectEl.dom;
+    for (i = 0, len = fonts.length; i < len; ++i) {
+      font = fonts[i];
+      lower = font.toLowerCase();
+      option = new Option(font, lower);
+      if (font === me.defaultFont) {
+        selIdx = i;
+      }
+      option.style.fontFamily = lower;
+      if (Ext.isIE) {
+        select.add(option);
+      } else {
+        select.options.add(option);
+      }
+    }
+    select.options[selIdx].selected = true;
+  }
+}, isEqual:function(value1, value2) {
+  return this.isEqualAsString(value1, value2);
+}, afterRender:function() {
+  var me = this, inputCmp = me.inputCmp;
+  me.callParent(arguments);
+  me.iframeEl = inputCmp.iframeEl;
+  me.textareaEl = inputCmp.textareaEl;
+  me.inputEl = me.iframeEl;
+  if (me.enableFont) {
+    me.initDefaultFont();
+  }
+  me.initPhase = 0;
+  me.initializeTask = Ext.TaskManager.start({run:me.initFrameDoc, scope:me, interval:10, duration:5000});
+}, initFrameDoc:function() {
+  var me = this, doc = me.getDoc();
+  if (me.destroying || me.destroyed) {
+    return Ext.TaskManager.stop(me.initializeTask);
+  }
+  switch(me.initPhase) {
+    case 0:
+      if (doc) {
+        me.win = me.getWin();
+        doc.open();
+        doc.write(me.getDocMarkup());
+        doc.close();
+        me.initPhase++;
+      }
+      break;
+    case 1:
+      if (doc.body || doc.readyState === 'complete') {
+        me.setDesignMode(true);
+        me.initPhase++;
+      }
+      break;
+    case 2:
+      me.initEditor();
+      Ext.TaskManager.stop(me.initializeTask);
+  }
+}, setDesignMode:function(mode) {
+  var me = this, doc = me.getDoc();
+  if (doc) {
+    if (me.readOnly) {
+      mode = false;
+    }
+    doc.designMode = /on|true/i.test(String(mode).toLowerCase()) ? 'on' : 'off';
+  }
+}, getDesignMode:function() {
+  var doc = this.getDoc();
+  return !doc ? '' : String(doc.designMode).toLowerCase();
+}, disableItems:function(disabled) {
+  var items = this.getToolbar().items.items, i, iLen = items.length, item;
+  for (i = 0; i < iLen; i++) {
+    item = items[i];
+    if (item.getItemId() !== 'sourceedit') {
+      item.setDisabled(disabled);
+    }
+  }
+}, toggleSourceEdit:function(sourceEditMode) {
+  var me = this, iframe = me.iframeEl, textarea = me.textareaEl, hiddenCls = Ext.baseCSSPrefix + 'hidden', btn = me.getToolbar().getComponent('sourceedit');
+  if (!Ext.isBoolean(sourceEditMode)) {
+    sourceEditMode = !me.sourceEditMode;
+  }
+  me.sourceEditMode = sourceEditMode;
+  if (btn.pressed !== sourceEditMode) {
+    btn.toggle(sourceEditMode);
+  }
+  if (sourceEditMode) {
+    me.disableItems(true);
+    me.syncValue();
+    iframe.addCls(hiddenCls);
+    textarea.removeCls(hiddenCls);
+    textarea.dom.removeAttribute('tabIndex');
+    textarea.focus();
+    me.inputEl = textarea;
+  } else {
+    if (me.initialized) {
+      me.disableItems(me.readOnly);
+    }
+    me.pushValue();
+    iframe.removeCls(hiddenCls);
+    textarea.addCls(hiddenCls);
+    textarea.dom.setAttribute('tabIndex', -1);
+    me.deferFocus();
+    me.inputEl = iframe;
+  }
+  me.fireEvent('editmodechange', me, sourceEditMode);
+  me.updateLayout();
+}, createLink:function() {
+  var url = prompt(this.createLinkText, this.defaultLinkValue);
+  if (url && url !== 'http:/' + '/') {
+    this.relayCmd('createlink', url);
+  }
+}, clearInvalid:Ext.emptyFn, setValue:function(value) {
+  var me = this, textarea = me.textareaEl;
+  if (value === null || value === undefined) {
+    value = '';
+  }
+  if (me.value !== value) {
+    if (textarea) {
+      textarea.dom.value = value;
+    }
+    me.pushValue();
+    if (!me.rendered && me.inputCmp) {
+      me.inputCmp.data.value = value;
+    }
+    me.mixins.field.setValue.call(me, value);
+  }
+  return me;
+}, cleanHtml:function(html) {
+  html = String(html);
+  if (Ext.isWebKit) {
+    html = html.replace(this.safariNonsenseRE, '');
+  }
+  if (html.charCodeAt(0) === parseInt(this.defaultValue.replace(this.nonDigitsRE, ''), 10)) {
+    html = html.substring(1);
+  }
+  return html;
+}, syncValue:function() {
+  var me = this, body, changed, html, bodyStyleText, match, textElDom;
+  if (me.initialized) {
+    body = me.getEditorBody();
+    html = body.innerHTML;
+    textElDom = me.textareaEl.dom;
+    if (Ext.isWebKit) {
+      bodyStyleText = body.style.cssText;
+      match = bodyStyleText.match(me.textAlignRE);
+      if (match && match[1]) {
+        html = '\x3cdiv style\x3d"' + match[0] + '"\x3e' + html + '\x3c/div\x3e';
+      }
+    }
+    html = me.cleanHtml(html);
+    if (me.fireEvent('beforesync', me, html) !== false) {
+      if (Ext.isGecko && textElDom.value === '' && html === '\x3cbr\x3e') {
+        html = '';
+      }
+      if (textElDom.value !== html) {
+        textElDom.value = html;
+        changed = true;
+      }
+      me.fireEvent('sync', me, html);
+      if (changed) {
+        me.checkChange();
+      }
+    }
+  }
+}, getValue:function() {
+  var me = this, value;
+  if (!me.sourceEditMode) {
+    me.syncValue();
+  }
+  value = me.rendered ? me.textareaEl.dom.value : me.value;
+  me.value = value;
+  return value;
+}, pushValue:function() {
+  var me = this, v;
+  if (me.initialized) {
+    v = me.textareaEl.dom.value || '';
+    if (!me.activated && v.length < 1) {
+      v = me.defaultValue;
+    }
+    if (me.fireEvent('beforepush', me, v) !== false) {
+      me.getEditorBody().innerHTML = v;
+      if (Ext.isGecko) {
+        me.setDesignMode(false);
+        me.setDesignMode(true);
+      }
+      me.fireEvent('push', me, v);
+    }
+  }
+}, focus:function(selectText, delay) {
+  var me = this, value, focusEl;
+  if (delay) {
+    if (!me.focusTask) {
+      me.focusTask = new Ext.util.DelayedTask(me.focus);
+    }
+    me.focusTask.delay(Ext.isNumber(delay) ? delay : 10, null, me, [selectText, false]);
+  } else {
+    if (selectText) {
+      if (me.textareaEl && me.textareaEl.dom) {
+        value = me.textareaEl.dom.value;
+      }
+      if (value && value.length) {
+        me.execCmd('selectall', true);
+      }
+    }
+    focusEl = me.getFocusEl();
+    if (focusEl && focusEl.focus) {
+      focusEl.focus();
+    }
+  }
+  return me;
+}, initEditor:function() {
+  var me = this, dbody = me.getEditorBody(), ss = me.textareaEl.getStyle(['font-size', 'font-family', 'background-image', 'background-repeat', 'background-color', 'color']), doc = me.getDoc(), docEl = Ext.get(doc), fn;
+  ss['background-attachment'] = 'fixed';
+  dbody.bgProperties = 'fixed';
+  Ext.DomHelper.applyStyles(dbody, ss);
+  if (docEl) {
+    try {
+      docEl.clearListeners();
+    } catch (e$39) {
+    }
+    fn = Ext.Function.createBuffered(me.updateToolbar, 100, me);
+    docEl.on({mousedown:fn, dblclick:fn, click:fn, keyup:fn, delegated:false});
+    fn = me.onRelayedEvent;
+    docEl.on({mousedown:fn, mousemove:fn, mouseup:fn, click:fn, dblclick:fn, delegated:false, scope:me});
+    if (Ext.isGecko) {
+      docEl.on('keypress', me.applyCommand, me);
+    }
+    if (me.fixKeys) {
+      docEl.on('keydown', me.fixKeys, me, {delegated:false});
+    }
+    if (me.fixKeysAfter) {
+      docEl.on('keyup', me.fixKeysAfter, me, {delegated:false});
+    }
+    if (Ext.isIE9) {
+      Ext.get(doc.documentElement).on('focus', me.focus, me);
+    }
+    if (Ext.isIE8) {
+      docEl.on('focusout', function() {
+        me.savedSelection = doc.selection.type !== 'None' ? doc.selection.createRange() : null;
+      }, me);
+      docEl.on('focusin', function() {
+        if (me.savedSelection) {
+          me.savedSelection.select();
+        }
+      }, me);
+    }
+    Ext.getWin().on('unload', me.destroyEditor, me);
+    me.initialized = true;
+    me.pushValue();
+    me.setReadOnly(me.readOnly);
+    me.fireEvent('initialize', me);
+  }
+}, destroyEditor:function() {
+  var me = this, initializeTask = me.initializeTask, doc, prop;
+  if (initializeTask) {
+    Ext.TaskManager.stop(initializeTask, true);
+  }
+  if (me.rendered) {
+    Ext.getWin().un('unload', me.destroyEditor, me);
+    doc = me.getDoc();
+    if (doc) {
+      Ext.get(doc).destroy();
+      if (doc.hasOwnProperty) {
+        for (prop in doc) {
+          try {
+            if (doc.hasOwnProperty(prop)) {
+              delete doc[prop];
+            }
+          } catch (e$40) {
+          }
+        }
+      }
+    }
+  }
+}, doDestroy:function() {
+  this.destroyEditor();
+  this.callParent();
+}, onRelayedEvent:function(event) {
+  var iframeEl = this.iframeEl, iframeXY = Ext.fly(iframeEl).getTrueXY(), originalEventXY = event.getXY(), eventXY = event.getXY();
+  event.xy = [iframeXY[0] + eventXY[0], iframeXY[1] + eventXY[1]];
+  event.injectEvent(iframeEl);
+  event.xy = originalEventXY;
+}, onFirstFocus:function() {
+  var me = this, selection, range;
+  me.activated = true;
+  me.disableItems(me.readOnly);
+  if (Ext.isGecko) {
+    me.win.focus();
+    selection = me.win.getSelection();
+    if (selection.focusNode && !me.getValue().length) {
+      range = selection.getRangeAt(0);
+      range.selectNodeContents(me.getEditorBody());
+      range.collapse(true);
+      me.deferFocus();
+    }
+    try {
+      me.execCmd('useCSS', true);
+      me.execCmd('styleWithCSS', false);
+    } catch (e$41) {
+    }
+  }
+  me.fireEvent('activate', me);
+}, adjustFont:function(btn) {
+  var adjust = btn.getItemId() === 'increasefontsize' ? 1 : -1, size = this.getDoc().queryCommandValue('FontSize') || '2', isPxSize = Ext.isString(size) && size.indexOf('px') !== -1, isSafari;
+  size = parseInt(size, 10);
+  if (isPxSize) {
+    if (size <= 10) {
+      size = 1 + adjust;
+    } else {
+      if (size <= 13) {
+        size = 2 + adjust;
+      } else {
+        if (size <= 16) {
+          size = 3 + adjust;
+        } else {
+          if (size <= 18) {
+            size = 4 + adjust;
+          } else {
+            if (size <= 24) {
+              size = 5 + adjust;
+            } else {
+              size = 6 + adjust;
+            }
+          }
+        }
+      }
+    }
+    size = Ext.Number.constrain(size, 1, 6);
+  } else {
+    isSafari = Ext.isSafari;
+    if (isSafari) {
+      adjust *= 2;
+    }
+    size = Math.max(1, size + adjust) + (isSafari ? 'px' : 0);
+  }
+  this.relayCmd('FontSize', size);
+}, updateToolbar:function() {
+  var me = this, i, l, btns, doc, name, queriedName, fontSelect, toolbarSubmenus;
+  if (me.readOnly) {
+    return;
+  }
+  if (!me.activated) {
+    me.onFirstFocus();
+    return;
+  }
+  btns = me.getToolbar().items.map;
+  doc = me.getDoc();
+  if (me.enableFont) {
+    queriedName = doc.queryCommandValue('fontName');
+    name = (queriedName ? queriedName.split(',')[0].replace(me.reStripQuotes, '') : me.defaultFont).toLowerCase();
+    fontSelect = me.fontSelect.dom;
+    if (name !== fontSelect.value || name !== queriedName) {
+      fontSelect.value = name;
+    }
+  }
+  function updateButtons() {
+    var state;
+    for (i = 0, l = arguments.length, name; i < l; i++) {
+      name = arguments[i];
+      try {
+        state = doc.queryCommandState(name);
+      } catch (e$42) {
+        state = false;
+      }
+      btns[name].toggle(state);
+    }
+  }
+  if (me.enableFormat) {
+    updateButtons('bold', 'italic', 'underline');
+  }
+  if (me.enableAlignments) {
+    updateButtons('justifyleft', 'justifycenter', 'justifyright');
+  }
+  if (me.enableLists) {
+    updateButtons('insertorderedlist', 'insertunorderedlist');
+  }
+  toolbarSubmenus = me.toolbar.query('menu');
+  for (i = 0; i < toolbarSubmenus.length; i++) {
+    toolbarSubmenus[i].hide();
+  }
+  me.syncValue();
+}, relayBtnCmd:function(btn) {
+  this.relayCmd(btn.getItemId());
+}, relayCmd:function(cmd, value) {
+  Ext.defer(function() {
+    var me = this;
+    if (!this.destroyed) {
+      me.win.focus();
+      me.execCmd(cmd, value);
+      me.updateToolbar();
+    }
+  }, 10, this);
+}, execCmd:function(cmd, value) {
+  var me = this, doc = me.getDoc();
+  doc.execCommand(cmd, false, value === undefined ? null : value);
+  me.syncValue();
+}, applyCommand:function(e) {
+  if (e.ctrlKey) {
+    var me = this, c = e.getCharCode(), cmd;
+    if (c > 0) {
+      c = String.fromCharCode(c);
+      switch(c) {
+        case 'b':
+          cmd = 'bold';
+          break;
+        case 'i':
+          cmd = 'italic';
+          break;
+        case 'u':
+          cmd = 'underline';
+          break;
+      }
+      if (cmd) {
+        me.win.focus();
+        me.execCmd(cmd);
+        me.deferFocus();
+        e.preventDefault();
+      }
+    }
+  }
+}, insertAtCursor:function(text) {
+  var me = this, win = me.getWin(), doc = me.getDoc(), sel, range, el, frag, node, lastNode, firstNode;
+  if (me.activated) {
+    win.focus();
+    if (win.getSelection) {
+      sel = win.getSelection();
+      if (sel.getRangeAt && sel.rangeCount) {
+        range = sel.getRangeAt(0);
+        range.deleteContents();
+        el = doc.createElement('div');
+        el.innerHTML = text;
+        frag = doc.createDocumentFragment();
+        while (node = el.firstChild) {
+          lastNode = frag.appendChild(node);
+        }
+        firstNode = frag.firstChild;
+        range.insertNode(frag);
+        if (lastNode) {
+          range = range.cloneRange();
+          range.setStartAfter(lastNode);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }
+    } else {
+      if (doc.selection && sel.type !== 'Control') {
+        sel = doc.selection;
+        range = sel.createRange();
+        range.collapse(true);
+        sel.createRange().pasteHTML(text);
+      }
+    }
+    me.deferFocus();
+  }
+}, fixKeys:function() {
+  var tag;
+  if (Ext.isIE10m) {
+    return function(e) {
+      var me = this, k = e.getKey(), doc = me.getDoc(), readOnly = me.readOnly, range, target;
+      if (k === e.TAB) {
+        e.stopEvent();
+        if (!readOnly) {
+          range = doc.selection.createRange();
+          if (range) {
+            if (range.collapse) {
+              range.collapse(true);
+              range.pasteHTML('\x26#160;\x26#160;\x26#160;\x26#160;');
+            }
+            me.deferFocus();
+          }
+        }
+      }
+    };
+  }
+  if (Ext.isOpera) {
+    return function(e) {
+      var me = this, k = e.getKey(), readOnly = me.readOnly;
+      if (k === e.TAB) {
+        e.stopEvent();
+        if (!readOnly) {
+          me.win.focus();
+          me.execCmd('InsertHTML', '\x26#160;\x26#160;\x26#160;\x26#160;');
+          me.deferFocus();
+        }
+      }
+    };
+  }
+  return null;
+}(), fixKeysAfter:function() {
+  if (Ext.isIE) {
+    return function(e) {
+      var me = this, k = e.getKey(), doc = me.getDoc(), readOnly = me.readOnly, innerHTML;
+      if (!readOnly && (k === e.BACKSPACE || k === e.DELETE)) {
+        innerHTML = doc.body.innerHTML;
+        if (innerHTML === '\x3cp\x3e\x26nbsp;\x3c/p\x3e' || innerHTML === '\x3cP\x3e\x26nbsp;\x3c/P\x3e') {
+          doc.body.innerHTML = '';
+        }
+      }
+    };
+  }
+  return null;
+}(), getToolbar:function() {
+  return this.toolbar;
+}, buttonTips:{bold:{title:'Bold (Ctrl+B)', text:'Make the selected text bold.', cls:Ext.baseCSSPrefix + 'html-editor-tip'}, italic:{title:'Italic (Ctrl+I)', text:'Make the selected text italic.', cls:Ext.baseCSSPrefix + 'html-editor-tip'}, underline:{title:'Underline (Ctrl+U)', text:'Underline the selected text.', cls:Ext.baseCSSPrefix + 'html-editor-tip'}, increasefontsize:{title:'Grow Text', text:'Increase the font size.', cls:Ext.baseCSSPrefix + 'html-editor-tip'}, decreasefontsize:{title:'Shrink Text', 
+text:'Decrease the font size.', cls:Ext.baseCSSPrefix + 'html-editor-tip'}, backcolor:{title:'Text Highlight Color', text:'Change the background color of the selected text.', cls:Ext.baseCSSPrefix + 'html-editor-tip'}, forecolor:{title:'Font Color', text:'Change the color of the selected text.', cls:Ext.baseCSSPrefix + 'html-editor-tip'}, justifyleft:{title:'Align Text Left', text:'Align text to the left.', cls:Ext.baseCSSPrefix + 'html-editor-tip'}, justifycenter:{title:'Center Text', text:'Center text in the editor.', 
+cls:Ext.baseCSSPrefix + 'html-editor-tip'}, justifyright:{title:'Align Text Right', text:'Align text to the right.', cls:Ext.baseCSSPrefix + 'html-editor-tip'}, insertunorderedlist:{title:'Bullet List', text:'Start a bulleted list.', cls:Ext.baseCSSPrefix + 'html-editor-tip'}, insertorderedlist:{title:'Numbered List', text:'Start a numbered list.', cls:Ext.baseCSSPrefix + 'html-editor-tip'}, createlink:{title:'Hyperlink', text:'Make the selected text a hyperlink.', cls:Ext.baseCSSPrefix + 'html-editor-tip'}, 
+sourceedit:{title:'Source Edit', text:'Switch to source editing mode.', cls:Ext.baseCSSPrefix + 'html-editor-tip'}}, privates:{deferFocus:function() {
+  this.focus(false, true);
+}, getFocusEl:function() {
+  return this.sourceEditMode ? this.textareaEl : this.iframeEl;
+}}});
+Ext.define('Ext.theme.neptune.form.field.HtmlEditor', {override:'Ext.form.field.HtmlEditor', defaultButtonUI:'plain-toolbar'});
 Ext.define('Ext.grid.CellContext', {isCellContext:true, generation:0, constructor:function(view) {
   this.view = view;
 }, setPosition:function(row, col) {
@@ -82034,8 +83614,12 @@ Ext.define('Ext.ux.layout.ResponsiveColumn', {extend:Ext.layout.container.Auto, 
 });
 Ext.define('Admin.model.Base', {extend:Ext.data.Model, schema:{namespace:'Admin.model'}});
 Ext.define('Admin.model.order.OrderModel', {extend:Admin.model.Base, fields:[{type:'int', name:'id'}, {type:'string', name:'orderNumber'}, {type:'date', name:'createTime', dateFormat:'Y/m/d H:i:s'}], proxy:{type:'rest', url:'http://localhost:8080/order'}});
-Ext.define('Admin.store.NavigationTree', {extend:Ext.data.TreeStore, storeId:'NavigationTree', fields:[{name:'text'}], root:{expanded:true, children:[{text:'Dashboard', iconCls:'x-fa fa-desktop', rowCls:'nav-tree-badge nav-tree-badge-new', viewType:'admindashboard', routeId:'dashboard', leaf:true}, {text:'订单管理模块', iconCls:'x-fa fa-address-card', viewType:'order', leaf:true}, {text:'测试', iconCls:'x-fa fa-address-card', viewType:'userdata', leaf:true}]}});
+Ext.define('Admin.model.process.definition.ProcessDefinitionModel', {extend:Admin.model.Base, fields:[{type:'string', name:'id'}, {type:'string', name:'category'}, {type:'string', name:'name'}, {type:'string', name:'key'}, {type:'string', name:'description'}, {type:'int', name:'version'}, {type:'string', name:'resourceName'}, {type:'string', name:'deploymentId'}, {type:'string', name:'diagramResourceName'}, {type:'string', name:'tenantId'}, {type:'boolean', name:'startFormKey'}, {type:'boolean', 
+name:'graphicalNotation'}, {type:'boolean', name:'suspended'}], proxy:{type:'rest', url:'/process-definition'}});
+Ext.define('Admin.store.NavigationTree', {extend:Ext.data.TreeStore, storeId:'NavigationTree', fields:[{name:'text'}], root:{expanded:true, children:[{text:'Dashboard', iconCls:'x-fa fa-desktop', rowCls:'nav-tree-badge nav-tree-badge-new', viewType:'admindashboard', routeId:'dashboard', leaf:true}, {text:'订单管理模块', iconCls:'x-fa fa-address-card', viewType:'order', leaf:true}, {text:'测试', iconCls:'x-fa fa-address-card', viewType:'userdata', leaf:true}, {text:'流程定义模块', iconCls:'x-fa fa-address-card', 
+viewType:'processDefinitionContainer', leaf:true}, {text:'Login', iconCls:'x-fa fa-check', viewType:'login', leaf:true}]}});
 Ext.define('Admin.store.order.OrderGridStroe', {extend:Ext.data.Store, alias:'store.orderGridStroe', storeId:'orderGridStroe', model:'Admin.model.order.OrderModel', proxy:{type:'rest', url:'http://localhost:8080/order', reader:{type:'json', rootProperty:'content', totalProperty:'totalElements'}, writer:{type:'json'}, simpleSortMode:true}, autoLoad:true, autoSync:true, remoteSort:true, pageSize:20, sorters:{direction:'DESC', property:'id'}});
+Ext.define('Admin.store.process.definition.ProcessDefinitionStroe', {extend:Ext.data.Store, alias:'store.processDefinitionStroe', storeId:'processStroe', model:'Admin.model.process.definition.ProcessDefinitionModel', proxy:{type:'rest', url:'/process-definition', reader:new Ext.data.JsonReader({type:'json', rootProperty:'content', totalProperty:'totalElements'}), writer:{type:'json'}, simpleSortMode:true}, autoLoad:true, autoSync:true, remoteSort:true, pageSize:20, sorters:{direction:'DESC', property:'id'}});
 Ext.define('Admin.store.userdata.DataGridStore', {extend:Ext.data.Store, alias:'store.dataGridStore', fields:[{type:'int', name:'id'}, {type:'string', name:'username'}, {type:'string', name:'password'}], proxy:{type:'ajax', url:'http://localhost:8080/user/getuser', reader:{type:'json'}}, autoLoad:'true', sorters:{direction:'ASC', property:'fullname'}});
 Ext.define('Admin.view.dashboard.DashboardController', {extend:Ext.app.ViewController, alias:'controller.dashboard', onRefreshToggle:function(tool, e, owner) {
   var store, runner;
@@ -82066,15 +83650,79 @@ Ext.define('Admin.view.dashboard.DashboardController', {extend:Ext.app.ViewContr
 }});
 Ext.define('Admin.view.dashboard.DashboardModel', {extend:Ext.app.ViewModel, alias:'viewmodel.dashboard', stores:{}});
 Ext.define('Admin.view.main.Main', {extend:Ext.container.Viewport, controller:'main', viewModel:'main', cls:'sencha-dash-viewport', itemId:'mainView', layout:{type:'vbox', align:'stretch'}, listeners:{render:'onMainViewRender'}, items:[{xtype:'toolbar', cls:'sencha-dash-dash-headerbar shadow', height:64, itemId:'headerBar', items:[{xtype:'component', reference:'senchaLogo', cls:'sencha-logo', html:'\x3cdiv class\x3d"main-logo"\x3e\x3cimg src\x3d"resources/images/company-logo.png"\x3eHello Extjs\x3c/div\x3e', 
-width:250}, {margin:'0 0 0 8', ui:'header', iconCls:'x-fa fa-navicon', id:'main-navigation-btn', handler:'onToggleNavigationSize'}, '-\x3e', {xtype:'tbtext', text:'用户名:Admin', cls:'top-user-name'}, {xtype:'image', cls:'header-right-profile-image', height:35, width:35, alt:'current user image', src:'resources/images/user-profile/2.png'}]}, {xtype:'maincontainerwrap', id:'main-view-detail-wrap', reference:'mainContainerWrap', flex:1, items:[{xtype:'treelist', reference:'navigationTreeList', itemId:'navigationTreeList', 
-ui:'nav', store:'NavigationTree', width:250, expanderFirst:false, expanderOnly:false, listeners:{selectionchange:'onNavigationTreeSelectionChange'}}, {xtype:'container', flex:1, reference:'mainCardPanel', cls:'sencha-dash-right-main-container', itemId:'contentPanel', layout:{type:'card', anchor:'100%'}}]}]});
-Ext.define('Admin.Application', {extend:Ext.app.Application, name:'Admin', stores:['NavigationTree'], defaultToken:'dashboard', mainView:'Admin.view.main.Main', onAppUpdate:function() {
+width:250}, {margin:'0 0 0 8', ui:'header', iconCls:'x-fa fa-navicon', id:'main-navigation-btn', handler:'onToggleNavigationSize'}, '-\x3e', {xtype:'tbtext', text:'用户名:Admin', id:'loginUserName', cls:'top-user-name'}, {xtype:'image', cls:'header-right-profile-image', id:'loginUserImage', height:35, width:35, alt:'current user image', src:'resources/images/user-profile/2.png'}, {iconCls:'x-fa fa-sign-out', ui:'header', tooltip:'Logout', handler:'logoutButton'}]}, {xtype:'maincontainerwrap', id:'main-view-detail-wrap', 
+reference:'mainContainerWrap', flex:1, items:[{xtype:'treelist', reference:'navigationTreeList', itemId:'navigationTreeList', ui:'nav', store:'NavigationTree', width:250, expanderFirst:false, expanderOnly:false, listeners:{selectionchange:'onNavigationTreeSelectionChange'}}, {xtype:'container', flex:1, reference:'mainCardPanel', cls:'sencha-dash-right-main-container', itemId:'contentPanel', layout:{type:'card', anchor:'100%'}}]}]});
+Ext.define('Admin.Application', {extend:Ext.app.Application, name:'Admin', stores:['NavigationTree'], defaultToken:'login', mainView:'Admin.view.main.Main', onAppUpdate:function() {
   Ext.Msg.confirm('Application Update', 'This application has an update, reload?', function(choice) {
     if (choice === 'yes') {
       window.location.reload();
     }
   });
 }});
+Ext.define('Admin.view.authentication.AuthenticationController', {extend:Ext.app.ViewController, alias:'controller.authentication', onFaceBookLogin:function() {
+  this.redirectTo('dashboard', true);
+}, onLoginButton:function(btn) {
+  var me = this;
+  Ext.Ajax.request({url:'login', method:'post', params:{userName:btn.up('form').getForm().findField('userid').getValue(), password:btn.up('form').getForm().findField('password').getValue()}, success:function(response, options) {
+    var json = Ext.util.JSON.decode(response.responseText);
+    if (json.success) {
+      me.redirectTo('dashboard', true);
+      Ext.getCmp('loginUserName').setText(json.map.userName);
+    } else {
+      Ext.Msg.alert('登录失败', json.msg);
+    }
+  }});
+}, onLoginAsButton:function() {
+  this.redirectTo('login', true);
+}, onNewAccount:function() {
+  this.redirectTo('register', true);
+}, onSignupClick:function() {
+  this.redirectTo('dashboard', true);
+}, onResetClick:function() {
+  this.redirectTo('dashboard', true);
+}});
+Ext.define('Admin.view.authentication.AuthenticationModel', {extend:Ext.app.ViewModel, alias:'viewmodel.authentication', data:{userid:'', fullName:'', password:'', email:'', persist:false, agrees:false}});
+Ext.define('Admin.view.authentication.Dialog', {extend:Ext.form.Panel, xtype:'authdialog', controller:'authentication', viewModel:{type:'authentication'}, defaultFocus:'textfield:focusable:not([hidden]):not([disabled]):not([value])', autoComplete:false, initComponent:function() {
+  var me = this, listen;
+  if (me.autoComplete) {
+    me.autoEl = Ext.applyIf(me.autoEl || {}, {tag:'form', name:'authdialog', method:'post'});
+  }
+  me.addCls('auth-dialog');
+  me.callParent();
+  if (me.autoComplete) {
+    listen = {afterrender:'doAutoComplete', scope:me, single:true};
+    Ext.each(me.query('textfield'), function(field) {
+      field.on(listen);
+    });
+  }
+}, doAutoComplete:function(target) {
+  if (target.inputEl && target.autoComplete !== false) {
+    target.inputEl.set({autocomplete:'on'});
+  }
+}});
+Ext.define('Admin.view.authentication.LockingWindow', {extend:Ext.window.Window, xtype:'lockingwindow', cls:'auth-locked-window', closable:false, resizable:false, autoShow:true, titleAlign:'center', maximized:true, modal:true, scrollable:true, layout:{type:'vbox', align:'center', pack:'center'}, controller:'authentication'});
+Ext.define('Admin.view.authentication.LockScreen', {extend:Admin.view.authentication.LockingWindow, xtype:'lockscreen', title:'Session Expired', defaultFocus:'authdialog', items:[{xtype:'authdialog', reference:'authDialog', defaultButton:'loginButton', autoComplete:false, width:455, cls:'auth-dialog-login', defaultFocus:'textfield[inputType\x3dpassword]', layout:{type:'vbox', align:'stretch'}, items:[{xtype:'container', cls:'auth-profile-wrap', height:120, layout:{type:'hbox', align:'center'}, items:[{xtype:'image', 
+height:80, margin:20, width:80, alt:'lockscreen-image', cls:'lockscreen-profile-img auth-profile-img', src:'resources/images/user-profile/2.png'}, {xtype:'box', html:"\x3cdiv class\x3d'user-name-text'\x3e Goff Smith \x3c/div\x3e\x3cdiv class\x3d'user-post-text'\x3e Project manager \x3c/div\x3e"}]}, {xtype:'container', padding:'0 20', layout:{type:'vbox', align:'stretch'}, defaults:{margin:'10 0'}, items:[{xtype:'textfield', labelAlign:'top', cls:'lock-screen-password-textbox', labelSeparator:'', 
+fieldLabel:"It's been a while. please enter your password to resume", emptyText:'Password', inputType:'password', allowBlank:false, triggers:{glyphed:{cls:'trigger-glyph-noop password-trigger'}}}, {xtype:'button', reference:'loginButton', scale:'large', ui:'soft-blue', iconAlign:'right', iconCls:'x-fa fa-angle-right', text:'Login', formBind:true, listeners:{click:'onLoginButton'}}, {xtype:'component', html:'\x3cdiv style\x3d"text-align:right"\x3e' + '\x3ca href\x3d"#login" class\x3d"link-forgot-password"\x3e' + 
+'or, sign in using other credentials\x3c/a\x3e' + '\x3c/div\x3e'}]}]}]});
+Ext.define('Admin.view.authentication.Login', {extend:Admin.view.authentication.LockingWindow, xtype:'login', title:"Let's Log In", defaultFocus:'authdialog', items:[{xtype:'authdialog', defaultButton:'loginButton', autoComplete:true, bodyPadding:'20 20', cls:'auth-dialog-login', header:false, width:415, layout:{type:'vbox', align:'stretch'}, defaults:{margin:'5 0'}, items:[{xtype:'label', text:'Sign into your account'}, {xtype:'textfield', cls:'auth-textbox', name:'userid', bind:'{userid}', height:55, 
+hideLabel:true, allowBlank:false, emptyText:'user id', triggers:{glyphed:{cls:'trigger-glyph-noop auth-email-trigger'}}}, {xtype:'textfield', cls:'auth-textbox', height:55, hideLabel:true, emptyText:'Password', inputType:'password', name:'password', bind:'{password}', allowBlank:false, triggers:{glyphed:{cls:'trigger-glyph-noop auth-password-trigger'}}}, {xtype:'container', layout:'hbox', items:[{xtype:'checkboxfield', flex:1, cls:'form-panel-font-color rememberMeCheckbox', height:30, bind:'{persist}', 
+boxLabel:'Remember me'}, {xtype:'box', html:'\x3ca href\x3d"#passwordreset" class\x3d"link-forgot-password"\x3e Forgot Password ?\x3c/a\x3e'}]}, {xtype:'button', reference:'loginButton', scale:'large', ui:'soft-green', iconAlign:'right', iconCls:'x-fa fa-angle-right', text:'Login', formBind:true, listeners:{click:'onLoginButton'}}, {xtype:'box', html:'\x3cdiv class\x3d"outer-div"\x3e\x3cdiv class\x3d"seperator"\x3eOR\x3c/div\x3e\x3c/div\x3e', margin:'10 0'}, {xtype:'button', scale:'large', ui:'facebook', 
+iconAlign:'right', iconCls:'x-fa fa-facebook', text:'Login with Facebook', listeners:{click:'onFaceBookLogin'}}, {xtype:'box', html:'\x3cdiv class\x3d"outer-div"\x3e\x3cdiv class\x3d"seperator"\x3eOR\x3c/div\x3e\x3c/div\x3e', margin:'10 0'}, {xtype:'button', scale:'large', ui:'gray', iconAlign:'right', iconCls:'x-fa fa-user-plus', text:'Create Account', listeners:{click:'onNewAccount'}}]}], initComponent:function() {
+  this.addCls('user-login-register-container');
+  this.callParent(arguments);
+}});
+Ext.define('Admin.view.authentication.PasswordReset', {extend:Admin.view.authentication.LockingWindow, xtype:'passwordreset', title:'Reset Password', defaultFocus:'authdialog', items:[{xtype:'authdialog', width:455, defaultButton:'resetPassword', autoComplete:true, bodyPadding:'20 20', layout:{type:'vbox', align:'stretch'}, defaults:{margin:'10 0'}, cls:'auth-dialog-login', items:[{xtype:'label', cls:'lock-screen-top-label', text:'Enter your email address for further reset instructions'}, {xtype:'textfield', 
+cls:'auth-textbox', height:55, name:'email', hideLabel:true, allowBlank:false, emptyText:'user@example.com', vtype:'email', triggers:{glyphed:{cls:'trigger-glyph-noop auth-email-trigger'}}}, {xtype:'button', reference:'resetPassword', scale:'large', ui:'soft-blue', formBind:true, iconAlign:'right', iconCls:'x-fa fa-angle-right', text:'Reset Password', listeners:{click:'onResetClick'}}, {xtype:'component', html:'\x3cdiv style\x3d"text-align:right"\x3e' + '\x3ca href\x3d"#login" class\x3d"link-forgot-password"\x3e' + 
+'Back to Log In\x3c/a\x3e' + '\x3c/div\x3e'}]}]});
+Ext.define('Admin.view.authentication.Register', {extend:Admin.view.authentication.LockingWindow, xtype:'register', title:'User Registration', defaultFocus:'authdialog', items:[{xtype:'authdialog', bodyPadding:'20 20', width:455, reference:'authDialog', defaultButton:'submitButton', autoComplete:true, cls:'auth-dialog-register', layout:{type:'vbox', align:'stretch'}, defaults:{margin:'10 0', selectOnFocus:true}, items:[{xtype:'label', cls:'lock-screen-top-label', text:'Create an account'}, {xtype:'textfield', 
+cls:'auth-textbox', height:55, hideLabel:true, allowBlank:false, emptyText:'Fullname', name:'fullName', bind:'{fullName}', triggers:{glyphed:{cls:'trigger-glyph-noop auth-email-trigger'}}}, {xtype:'textfield', cls:'auth-textbox', height:55, hideLabel:true, allowBlank:false, name:'userid', bind:'{userid}', emptyText:'Username', triggers:{glyphed:{cls:'trigger-glyph-noop auth-email-trigger'}}}, {xtype:'textfield', cls:'auth-textbox', height:55, hideLabel:true, allowBlank:false, name:'email', emptyText:'user@example.com', 
+vtype:'email', bind:'{email}', triggers:{glyphed:{cls:'trigger-glyph-noop auth-envelope-trigger'}}}, {xtype:'textfield', cls:'auth-textbox', height:55, hideLabel:true, allowBlank:false, emptyText:'Password', name:'password', inputType:'password', bind:'{password}', triggers:{glyphed:{cls:'trigger-glyph-noop auth-password-trigger'}}}, {xtype:'checkbox', flex:1, name:'agrees', cls:'form-panel-font-color rememberMeCheckbox', height:32, bind:'{agrees}', allowBlank:false, boxLabel:'I agree with the Terms and Conditions', 
+isValid:function() {
+  var me = this;
+  return me.checked || me.disabled;
+}}, {xtype:'button', scale:'large', ui:'soft-blue', formBind:true, reference:'submitButton', bind:false, margin:'5 0', iconAlign:'right', iconCls:'x-fa fa-angle-right', text:'Signup', listeners:{click:'onSignupClick'}}, {xtype:'box', html:'\x3cdiv class\x3d"outer-div"\x3e\x3cdiv class\x3d"seperator"\x3eOR\x3c/div\x3e\x3c/div\x3e'}, {xtype:'button', scale:'large', ui:'facebook', margin:'5 0', iconAlign:'right', iconCls:'x-fa fa-facebook', text:'Login with Facebook', listeners:{click:'onFaceBookLogin'}}, 
+{xtype:'component', html:'\x3cdiv style\x3d"text-align:right"\x3e' + '\x3ca href\x3d"#login" class\x3d"link-forgot-password"\x3e' + 'Back to Log In\x3c/a\x3e' + '\x3c/div\x3e'}]}]});
 Ext.define('Admin.view.dashboard.Dashboard', {extend:Ext.container.Container, xtype:'admindashboard', controller:'dashboard', viewModel:{type:'dashboard'}, layout:'responsivecolumn', listeners:{hide:'onHideView'}, html:'admindashboard'});
 Ext.define('Admin.view.main.MainContainerWrap', {extend:Ext.container.Container, xtype:'maincontainerwrap', scrollable:'y', layout:{type:'hbox', align:'stretchmax', animate:true, animatePolicy:{x:true, width:true}}, beforeLayout:function() {
   var me = this, height = Ext.Element.getViewportHeight() - 64, navTree = me.getComponent('navigationTreeList');
@@ -82143,10 +83791,21 @@ Ext.define('Admin.view.main.MainController', {extend:Ext.app.ViewController, ali
   }
 }, onMainViewRender:function() {
   if (!window.location.hash) {
-    this.redirectTo('dashboard');
+    this.redirectTo('login');
   }
 }, onRouteChange:function(id) {
   this.setCurrentView(id);
+}, logoutButton:function() {
+  var me = this;
+  Ext.Ajax.request({url:'logout', method:'post', success:function(response, options) {
+    var json = Ext.util.JSON.decode(response.responseText);
+    if (json.success) {
+      me.redirectTo('login', true);
+      window.location.reload();
+    } else {
+      Ext.Msg.alert('登出失败', json.msg);
+    }
+  }});
 }});
 Ext.define('Admin.view.main.MainModel', {extend:Ext.app.ViewModel, alias:'viewmodel.main', data:{currentView:null}});
 Ext.define('Admin.view.order.Order', {extend:Ext.container.Container, xtype:'order', controller:'orderViewController', viewModel:{type:'orderViewModel'}, layout:'fit', items:[{xtype:'orderPanel'}]});
@@ -82272,6 +83931,74 @@ Ext.define('Admin.view.order.OrderWindow', {extend:Ext.window.Window, alias:'wid
 name:'createTime', format:'Y/m/d H:i:s'}], buttons:[{xtype:'button', text:'Submit', handler:'submitEditForm'}, {xtype:'button', text:'Close', handler:function(btn) {
   btn.up('window').close();
 }}]}]});
+Ext.define('Admin.view.process.definition.ProcessDefinitionContainer', {extend:Ext.container.Container, xtype:'processDefinitionContainer', controller:'processDefinitionViewController', viewModel:{type:'processDefinitionViewModel'}, layout:'fit', items:[{xtype:'processDefinitionGridPanel'}]});
+Ext.define('Admin.view.process.definition.ProcessDefinitionGridPanel', {extend:Ext.panel.Panel, xtype:'processDefinitionGridPanel', layout:'fit', items:[{xtype:'gridpanel', cls:'process-definition-grid', title:'流程定义列表', bind:'{processList}', scrollable:false, columns:[{header:'流程定义实体Id', dataIndex:'id', width:200, sortable:true}, {header:'类别', dataIndex:'category', width:200, sortable:true}, {header:'名称', dataIndex:'name', width:200, sortable:true}, {header:'流程key', dataIndex:'key', width:150, sortable:true}, 
+{header:'版本号', dataIndex:'version', width:60, sortable:true}, {header:'部署Id', dataIndex:'deploymentId', width:60, sortable:true, hidden:true}, {header:'bpmn XML', dataIndex:'resourceName', width:120, sortable:true, hidden:true, renderer:function(value, metaData, record, rowIdx, colIdx, store, view) {
+  return '\x3ca target\x3d"_blank" href\x3d"' + 'process-definition/resource?pdid\x3d' + record.get('id') + '\x26resourceName\x3d' + record.get('resourceName') + '"\x3e' + record.get('resourceName') + '\x3c/a\x3e';
+}}, {header:'流程图', dataIndex:'diagramResourceName', width:120, sortable:true, hidden:true, renderer:function(value, metaData, record, rowIdx, colIdx, store, view) {
+  return '\x3ca target\x3d"_blank" href\x3d"' + 'process-definition/resource?pdid\x3d' + record.get('id') + '\x26resourceName\x3d' + record.get('diagramResourceName') + '"\x3e' + record.get('diagramResourceName') + '\x3c/a\x3e';
+}}, {header:'是否挂起', dataIndex:'suspended', width:80, sortable:true, hidden:true}, {header:'startFormKey', dataIndex:'startFormKey', width:180, sortable:true, hidden:true}, {header:'graphicalNotation', dataIndex:'graphicalNotation', width:180, sortable:true, hidden:true}, {header:'description', dataIndex:'description', width:60, sortable:true, hidden:true}, {header:'tenantId', dataIndex:'tenantId', width:180, sortable:true, hidden:true}, {xtype:'actioncolumn', cls:'content-column', width:260, text:'操作', 
+flex:1, items:[{xtype:'button', iconCls:'x-fa fa-trash-o', tooltip:'删除', handler:'onClickProcessDefinitionGridDeleteButton'}, {xtype:'button', iconCls:'x-fa  fa-file-excel-o', tooltip:'BPMN XML', handler:'onClickProcessDefinitionReadResourceButton'}, {xtype:'button', iconCls:'x-fa fa-file-picture-o', tooltip:'流程定义图', handler:'onClickProcessDefinitionReadDiagramResourceButton'}, {xtype:'button', iconCls:'x-fa fa-cog', tooltip:'激活', getClass:function(v, meta, rec) {
+  if (rec.get('suspended') != true) {
+    return 'x-hidden';
+  }
+  return 'x-fa fa-cog';
+}, handler:'onClickProcessDefinitionActiveButton'}, {xtype:'button', iconCls:'x-fa fa-ban', tooltip:'挂起', getClass:function(v, meta, rec) {
+  if (rec.get('suspended') != false) {
+    return 'x-hidden';
+  }
+  return 'x-fa fa-ban';
+}, handler:'onClickProcessDefinitionSuspendButton'}, {xtype:'button', iconCls:'x-fa fa-exchange', tooltip:'转换为Model', handler:'onClickProcessDefinitionGridConvertModelButton'}]}], tbar:[{text:'上传BPMN', tooltip:'上传流程图', iconCls:'fa fa-cloud-upload', handler:'onClickProcessDefinitionGridUploadButton'}], dockedItems:[{xtype:'pagingtoolbar', dock:'bottom', displayInfo:true, bind:'{processList}'}]}]});
+Ext.define('Admin.view.process.definition.ProcessDefinitionUploadWindow', {extend:Ext.window.Window, alias:'widget.processDefinitionUploadWindow', height:180, minHeight:100, minWidth:300, width:500, scrollable:true, title:'ProcessDefinition Upload Window', closable:true, constrain:true, defaultFocus:'textfield', modal:true, layout:'fit', items:[{xtype:'form', layout:'form', padding:'10px', items:[{xtype:'filefield', width:400, labelWidth:80, name:'file', emptyText:'Select an zip/bpmn/bpmn.20.xml file!', 
+fieldLabel:'上传文件:', labelSeparator:'', buttonConfig:{xtype:'filebutton', glyph:'', iconCls:'x-fa fa-cloud-upload', text:'Browse'}}]}], buttons:['-\x3e', {xtype:'button', text:'Upload', handler:'onClickUploadFormSumbitButton'}, {xtype:'button', text:'Close', handler:function(btn) {
+  btn.up('window').close();
+}}, '-\x3e']});
+Ext.define('Admin.view.process.definition.ProcessDefinitionViewController', {extend:Ext.app.ViewController, alias:'controller.processDefinitionViewController', onClickProcessDefinitionGridUploadButton:function(btn) {
+  btn.up('panel').up('container').add(Ext.widget('processDefinitionUploadWindow')).show();
+}, onClickUploadFormSumbitButton:function(btn) {
+  var form = btn.up('window').down('form');
+  form.getForm().submit({url:'/process-definition', method:'POST', waitMsg:'正在上传，请耐心等待....', success:function(form, action) {
+    Ext.Msg.alert('Success', action.result.msg, function() {
+      btn.up('window').close();
+      Ext.data.StoreManager.lookup('processStroe').load();
+    });
+  }, failure:function(form, action) {
+    Ext.Msg.alert('Error', action.result.msg);
+  }});
+}, onClickProcessDefinitionReadResourceButton:function(view, recIndex, cellIndex, item, e, record) {
+  var resourceUrl = '/process-definition/resource?pdid\x3d' + record.get('id') + '\x26resourceName\x3d' + record.get('resourceName');
+  var win = new Ext.window.Window({title:'流程文件bpmn', width:780, height:470, layout:'fit', items:[{xtype:'panel', autoScroll:true}]});
+  win.show();
+  Ext.Ajax.request({url:resourceUrl, success:function(response, options) {
+    var panel = win.down('panel');
+    panel.body.update('\x3cxmp\x3e' + response.responseText + '\x3c/xmp\x3e');
+  }});
+}, onClickProcessDefinitionReadDiagramResourceButton:function(view, recIndex, cellIndex, item, e, record) {
+  var diagramResourceUrl = '/process-definition/resource?pdid\x3d' + record.get('id') + '\x26resourceName\x3d' + record.get('diagramResourceName');
+  var win = new Ext.window.Window({title:'查看流程PNG', width:860, height:500, layout:'fit', items:[new Ext.Panel({resizeTabs:true, autoScroll:true, html:'\x3ciframe scrolling\x3d"auto" frameborder\x3d"0" width\x3d"100%" height\x3d"100%" src\x3d' + diagramResourceUrl + '\x3e\x3c/iframe\x3e'})]});
+  win.show();
+}, onClickProcessDefinitionGridDeleteButton:function(view, recIndex, cellIndex, item, e, record) {
+  Ext.MessageBox.confirm('提示', '确定要进行删除操作吗？数据将无法还原！', function(btn, text) {
+    if (btn == 'yes') {
+      Ext.Ajax.request({url:'/process-definition', method:'delete', params:{deploymentId:record.get('deploymentId')}, success:function(response, options) {
+        var json = Ext.util.JSON.decode(response.responseText);
+        Ext.Msg.alert('操作成功', json.msg, function() {
+          view.getStore('processDefinitionGridStore').reload();
+        });
+      }, failure:function(response, options) {
+        var json = Ext.util.JSON.decode(response.responseText);
+        Ext.Msg.alert('操作失败', json.msg);
+      }});
+    }
+  }, this);
+}, onClickProcessDefinitionActiveButton:function(view, recIndex, cellIndex, item, e, record) {
+  Ext.Msg.alert('Title', 'Click Active Button');
+}, onClickProcessDefinitionSuspendButton:function(view, recIndex, cellIndex, item, e, record) {
+  Ext.Msg.alert('Title', 'Click Suspend Button');
+}, onClickProcessDefinitionGridConvertModelButton:function(view, recIndex, cellIndex, item, e, record) {
+  Ext.Msg.alert('Title', 'Click Convert Model Button');
+}});
+Ext.define('Admin.view.process.definition.ProcessDefinitionViewModel', {extend:Ext.app.ViewModel, alias:'viewmodel.processDefinitionViewModel', stores:{processList:{type:'processDefinitionStroe'}}});
 Ext.define('Admin.view.userdata.DataPanel', {extend:Ext.panel.Panel, xtype:'dataPanel', layout:'fit', items:[{xtype:'gridpanel', id:'usergrid', cls:'user-grid', title:'OrderGrid Results', bind:'{dataLists}', scrollable:false, columns:[{xtype:'gridcolumn', width:40, dataIndex:'id', text:'#'}, {xtype:'gridcolumn', width:75, dataIndex:'username', text:'用户名'}, {xtype:'gridcolumn', cls:'content-column', dataIndex:'password', text:'密码', flex:1}, {xtype:'actioncolumn', cls:'content-column', width:120, dataIndex:'bool', 
 text:'Actions', tooltip:'edit ', items:[{xtype:'button', iconCls:'x-fa fa-pencil', handler:'onAddUser'}, {xtype:'button', iconCls:'x-fa fa-close', handler:'onDeleteUser'}, {xtype:'button', iconCls:'x-fa fa-ban', handler:'onChangeUser'}]}], dockedItems:[{xtype:'pagingtoolbar', dock:'bottom', itemId:'userPaginationToolbar', displayInfo:true, bind:'{dataLists}'}]}]});
 Ext.define('Admin.view.userdata.DataViewController', {extend:Ext.app.ViewController, alias:'controller.dataViewController', onAddUser:function(grid, rowIndex, colIndex) {
